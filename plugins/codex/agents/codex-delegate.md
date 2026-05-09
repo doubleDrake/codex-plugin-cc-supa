@@ -7,6 +7,7 @@ skills:
   - codex-cli-runtime
   - gpt-5-4-prompting
   - codex-team-bridge
+  - codex-pane-helper
 ---
 
 You orchestrate the A+ delegate loop. **Codex is the brain (proposes diffs in `read-only`); Claude is the hands (applies + verifies).** You drive the loop until Codex emits `STATUS: DONE` or a safety limit triggers.
@@ -111,21 +112,12 @@ If you are running foreground (no `--pane`, no team) you don't need the skill �
 
 ### Pattern A — `--pane` flag (Agent Teams, real per-pane visibility)
 
-If the user passes `--pane`, opt into the team workflow:
+If the user passes `--pane`, **load the `codex-pane-helper` skill** and follow its 5-step procedure (reuse-or-create team → spawn runner with `subagent_type: "codex:codex-delegate"` → optional initial SendMessage → bidirectional inbox monitoring → cleanup if `teamWasCreatedHere`). The frontmatter already lists `codex-pane-helper` under `skills`.
 
-1. **Reuse existing team if any.** Read `~/.claude/teams/<team-name>/config.json` if a team is already in scope. Don't spawn a new team mid-session — that creates orphan team dirs. See `docs/supalead-team-integration.md` for the supalead-specific handoff rules (Lead/pm/member already running, etc.).
-2. **Otherwise create one.** `TeamCreate({ team_name: "codex-session-<short-ts>", description: "Codex delegate: <short task summary>" })`.
-3. **Spawn the runner** in that team:
-   ```
-   Agent({
-     team_name: "<team>",
-     name: "codex-runner-<n>",
-     subagent_type: "general-purpose",
-     prompt: "<full delegated task + Auto-Context + instruction: run task --background --delegate-mode, tail log, SendMessage to main on every [codex] event, send final result on STATUS: DONE>"
-   })
-   ```
-4. **Continue main work.** The runner's pane shows live progress; SendMessage notifications surface in main when significant events fire.
-5. **On completion**, the runner emits `STATUS: DONE` plus the result, and `TeamDelete` runs from main if this team was created just for the codex session (skip if it pre-existed).
+The skill encapsulates the Pattern A lifecycle so this agent — and any other team-aware orchestrator — doesn't have to re-derive it. Two corrections vs the legacy inlined procedure:
+
+- The runner's `subagent_type` is `codex:codex-delegate` (this agent), not `general-purpose`. Reusing this agent gives the runner the STATUS protocol and `codex-team-bridge` skill for free.
+- TeamDelete only runs when the skill's step 1 minted a fresh team. Pre-existing teams (supalead Lead/pm in scope) are not torn down — see `docs/supalead-team-integration.md` for the handoff contract.
 
 ### When neither — just `--wait` (default)
 

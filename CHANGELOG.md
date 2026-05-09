@@ -6,6 +6,18 @@ Linear Project: [codex-plugin-cc-plus fork](https://linear.app/supalead/project/
 
 ## [Unreleased]
 
+### Added — `codex-pane-helper` skill (W6.C SUP-386) — `--pane` automation packaged
+
+`/codex:delegate --pane` (and `/codex --pane` after W6.B) used to require the orchestrator to re-derive the five-step Pattern A flow (reuse/create team → Agent spawn → SendMessage → monitor → cleanup) every time. New skill encapsulates the procedure so any team-aware agent can opt in without copying the steps.
+
+- New `plugins/codex/skills/codex-pane-helper/SKILL.md` (~120 lines): five-step procedure + error handling table + reuse-vs-create heuristic that reads `CLAUDE_TEAM_NAME` and falls through to `docs/supalead-team-integration.md` when an existing team is in scope. Cleanup is conditional on `teamWasCreatedHere` so supalead Lead/pm sessions are not torn down by accident.
+- Two architectural corrections vs the legacy inlined procedure in `agents/codex-delegate.md`:
+  - The runner's `subagent_type` is `codex:codex-delegate` (the same agent), not `general-purpose`. Reusing the agent gives the runner the STATUS protocol and `codex-team-bridge` skill automatically.
+  - `TeamCreate` does NOT pass an `icon` parameter (W5 verified that emoji icons are rejected).
+- `agents/codex-delegate.md` slimmed: Pattern A section now points to the skill and explains the two corrections in 5 lines instead of inlining a 17-line procedure. Frontmatter `skills` list extended with `codex-pane-helper`.
+
+Refs SUP-378 (the `--pane` flag itself), SUP-381 (sister skill `codex-team-bridge` — translation layer for codex stdin/stdout side, loaded automatically by codex-delegate runner).
+
 ### Added — `/codex` natural-language entry (W6.B SUP-385)
 
 User feedback: "현재 `/codex` blah blah 명령어 너무 많은데 사용성 관점에서 단순화하면 좋겠어. 자연어로 처리할수있게하면 더 좋을것같고." Nine specific commands (`/codex:rescue`, `/codex:delegate`, `/codex:consult`, `/codex:review`, `/codex:adversarial-review`, `/codex:status`, `/codex:result`, `/codex:cancel`, `/codex:setup`) were friction for casual use. New `/codex` command is a single natural-language router.

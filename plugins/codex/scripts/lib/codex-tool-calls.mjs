@@ -1,4 +1,4 @@
-// codex-tool-calls — schema-validated tool call dispatcher (SUP-383).
+// codex-tool-calls — schema-validated tool call dispatcher (SUP-383 + W6.A SUP-384).
 //
 // Codex emits a single fenced JSON block in its final response:
 //
@@ -15,43 +15,80 @@
 // 2. JSON.parse → array of tool call objects.
 // 3. Validates against schemas/codex-tool-calls.schema.json (manual validator
 //    to avoid an Ajv dependency).
-// 4. Dispatches each call sequentially, returning a per-call result list.
+// 4. Dispatches each call sequentially with sandbox containment.
 //
 // Side-effect ordering matches block order. Errors in one call do NOT halt
 // subsequent calls — that's the caller's policy (we just report).
+//
+// Security model (SUP-384, adversarial-review follow-up):
+//
+// - "Communication" tools — team_send / ask_lead / push_notification /
+//   todo_write — touch only this team's inbox artifacts (CLAUDE_HOME/teams/...).
+//   They do NOT touch workspace files. Default: ALLOWED.
+//
+// - "Side-effect" tools — edit_file / write_file / run_bash — touch the
+//   workspace and can run arbitrary commands. Default: REJECTED. Caller must
+//   opt-in via env var CODEX_DELEGATE_WRITES=enabled (or "1" / "true"). Even
+//   when opted-in:
+//     * edit_file / write_file paths are realpath-resolved and rejected if
+//       outside workspace root (no absolute paths, no `..`, no symlink-out).
+//     * run_bash command is split on whitespace; the first token must be in
+//       the allowlist, and shell metachars (;|&$<>`()) are rejected outright.
+//       Override allowlist with CODEX_BASH_ALLOWLIST=git,node,npm,...
+//
+// - team_send writes go through a link()-based atomic lock (cross-platform,
+//   no native deps) so concurrent senders don't lose messages. Corrupt inbox
+//   files are preserved as <member>.broken.<ts>.json before being replaced.
 //
 // Why JSON (not YAML):
 // - JSON.parse is a JS built-in — zero dependencies, predictable, handles
 //   nested arrays/objects automatically. cc-upstream stays npm-clean.
 // - YAML's human friendliness loses to JSON's parser robustness for
 //   machine-emitted content (codex is fluent in JSON).
-// - Multi-line file content survives via escape sequences (\n, \") which
-//   codex emits cleanly.
 //
 // Why a fenced block, not free regex:
 // - Quoted examples in other code blocks would otherwise fire false-positives.
 // - Schema is the contract. Codex / Claude updates change schemas/*.json
 //   only; parser code stays stable.
 //
-// Refs: SUP-383 (this file), SUP-382 (inbox spike that proved direct write
-// works), docs/agent-teams-poc.md Pattern A.
+// Refs: SUP-383 (origin), SUP-384 (this hardening), SUP-382 (inbox spike).
 
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SCHEMA_PATH = path.resolve(__dirname, "..", "..", "schemas", "codex-tool-calls.schema.json");
 
-const CLAUDE_HOME = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
-const TEAMS_DIR = path.join(CLAUDE_HOME, "teams");
+function resolveClaudeHome(env = process.env) {
+  return env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+}
+function resolveTeamsDir(env = process.env) {
+  return path.join(resolveClaudeHome(env), "teams");
+}
 
 // Match the canonical fence with the "codex-tool-calls" tag. Tag is mandatory
 // — bare ```json blocks are NOT treated as tool calls (avoids snapshots /
 // quoted examples in docs from firing).
 const FENCE_REGEX = /```json\s+codex-tool-calls\s*\n([\s\S]*?)\n```/m;
+
+// Default bash allowlist for run_bash. First whitespace-token must be one of
+// these. Override via CODEX_BASH_ALLOWLIST=tok1,tok2,... (comma-separated).
+const DEFAULT_BASH_ALLOWLIST = [
+  "git",
+  "node", "tsc",
+  "npm", "yarn", "pnpm",
+  "rg", "grep", "ls", "cat", "find", "head", "tail",
+  "jq", "wc", "sort", "uniq", "diff", "stat",
+  "echo", "true", "false", "which", "pwd",
+  "test", "[" // POSIX test
+];
+
+// Shell metacharacters that enable arbitrary command chaining / substitution.
+// We forbid them outright in run_bash command strings.
+const SHELL_METACHARS = /[`$();&|<>]|\$\(/;
 
 /**
  * Parse the JSON body of a fenced codex-tool-calls block.
@@ -149,15 +186,132 @@ export function validateToolCalls(calls) {
 }
 
 // ---------------------------------------------------------------------------
+// Sandbox helpers (SUP-384).
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve `targetPath` against `workspaceRoot` and confirm the result stays
+ * inside the workspace, even after symlink resolution. Returns the realpath
+ * of the target. Throws on absolute paths, parent-traversal, or symlink-out.
+ */
+export function safeResolveInWorkspace(targetPath, workspaceRoot) {
+  if (typeof targetPath !== "string" || targetPath.length === 0) {
+    throw new Error("path must be a non-empty string");
+  }
+  if (path.isAbsolute(targetPath)) {
+    throw new Error(`absolute path not allowed: ${targetPath}`);
+  }
+  // Guard against `..` segments BEFORE resolve (lexical check).
+  const segs = targetPath.split(/[\\/]/);
+  if (segs.includes("..")) {
+    throw new Error(`parent-traversal not allowed: ${targetPath}`);
+  }
+  const resolved = path.resolve(workspaceRoot, targetPath);
+
+  // Realpath the deepest existing ancestor; the rest of the path is appended.
+  let probe = resolved;
+  while (!fs.existsSync(probe)) {
+    const parent = path.dirname(probe);
+    if (parent === probe) break;
+    probe = parent;
+  }
+  let realProbe;
+  try { realProbe = fs.realpathSync(probe); } catch { realProbe = probe; }
+  const tail = path.relative(probe, resolved);
+  const realTarget = tail ? path.join(realProbe, tail) : realProbe;
+
+  let realRoot;
+  try { realRoot = fs.realpathSync(workspaceRoot); }
+  catch { realRoot = path.resolve(workspaceRoot); }
+
+  if (realTarget !== realRoot &&
+      !realTarget.startsWith(realRoot + path.sep)) {
+    throw new Error(`path outside workspace: ${targetPath}`);
+  }
+  return realTarget;
+}
+
+function isWriteAllowed(env) {
+  const flag = env.CODEX_DELEGATE_WRITES;
+  return flag === "enabled" || flag === "1" || flag === "true";
+}
+
+function getBashAllowlist(env) {
+  const override = env.CODEX_BASH_ALLOWLIST;
+  if (typeof override === "string" && override.length > 0) {
+    return override.split(",").map((s) => s.trim()).filter(Boolean);
+  }
+  return DEFAULT_BASH_ALLOWLIST;
+}
+
+/**
+ * Decide whether `command` is safe to run via run_bash. Pure function — the
+ * actual exec happens in dispatchRunBash. Returns { allowed, reason?, argv? }.
+ */
+export function inspectBashCommand(command, env = process.env) {
+  if (typeof command !== "string" || command.length === 0) {
+    return { allowed: false, reason: "empty command" };
+  }
+  if (SHELL_METACHARS.test(command)) {
+    return { allowed: false, reason: "shell metacharacters (;|&$<>`()) not allowed" };
+  }
+  // Whitespace-split — no quote handling, deliberately. Codex emits simple
+  // commands; quoted args with embedded whitespace should use `--flag=value`
+  // form or be rejected.
+  const argv = command.trim().split(/\s+/);
+  const head = argv[0];
+  const allowlist = getBashAllowlist(env);
+  if (!allowlist.includes(head)) {
+    return {
+      allowed: false,
+      reason: `command '${head}' not in allowlist (env CODEX_BASH_ALLOWLIST to override): ${allowlist.join(",")}`
+    };
+  }
+  return { allowed: true, argv };
+}
+
+// ---------------------------------------------------------------------------
+// Inbox lock (link()-based atomic CAS, cross-platform, no deps).
+// ---------------------------------------------------------------------------
+
+function withInboxLock(target, fn, opts = {}) {
+  const maxWaitMs = opts.maxWaitMs ?? 2000;
+  const lockPath = `${target}.lock`;
+  const dummyPath = `${target}.lock.dummy.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}`;
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(dummyPath, "", "utf8");
+  const start = Date.now();
+  try {
+    while (true) {
+      try {
+        fs.linkSync(dummyPath, lockPath);
+        try { return fn(); }
+        finally { try { fs.unlinkSync(lockPath); } catch { /* best-effort */ } }
+      } catch (e) {
+        if (e.code !== "EEXIST") throw e;
+        if (Date.now() - start >= maxWaitMs) {
+          throw new Error(`inbox lock timeout (${maxWaitMs}ms): ${target}`);
+        }
+        // small randomized backoff
+        const sleepUntil = Date.now() + Math.floor(Math.random() * 30) + 5;
+        while (Date.now() < sleepUntil) { /* spin */ }
+      }
+    }
+  } finally {
+    try { fs.unlinkSync(dummyPath); } catch { /* best-effort */ }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Dispatcher — runs each validated call. Errors don't halt subsequent calls.
 // ---------------------------------------------------------------------------
 
-function teamConfigPath(teamName) {
-  return path.join(TEAMS_DIR, teamName, "config.json");
+function teamConfigPath(ctx) {
+  return path.join(ctx.teamsDir, ctx.teamName, "config.json");
 }
 
-function inboxPath(teamName, memberName) {
-  return path.join(TEAMS_DIR, teamName, "inboxes", `${memberName}.json`);
+function inboxPath(ctx, memberName) {
+  return path.join(ctx.teamsDir, ctx.teamName, "inboxes", `${memberName}.json`);
 }
 
 function resolveTeamContext(env) {
@@ -165,13 +319,14 @@ function resolveTeamContext(env) {
   if (!teamName) return null;
   return {
     teamName,
-    agentName: env.CLAUDE_AGENT_NAME ?? "codex-runner"
+    agentName: env.CLAUDE_AGENT_NAME ?? "codex-runner",
+    teamsDir: resolveTeamsDir(env)
   };
 }
 
 function dispatchTeamSend(call, ctx) {
   if (!ctx) return { ok: false, error: "no team context (CLAUDE_TEAM_NAME unset)" };
-  const cfgPath = teamConfigPath(ctx.teamName);
+  const cfgPath = teamConfigPath(ctx);
   if (!fs.existsSync(cfgPath)) return { ok: false, error: `team config missing: ${cfgPath}` };
   let cfg;
   try { cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8")); }
@@ -179,13 +334,7 @@ function dispatchTeamSend(call, ctx) {
   const found = (cfg.members || []).find((m) => m && m.name === call.to);
   if (!found) return { ok: false, error: `recipient '${call.to}' not in team '${ctx.teamName}'` };
 
-  const target = inboxPath(ctx.teamName, call.to);
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  let current = [];
-  if (fs.existsSync(target)) {
-    try { const parsed = JSON.parse(fs.readFileSync(target, "utf8")); if (Array.isArray(parsed)) current = parsed; }
-    catch { /* corrupt — start fresh rather than block this message */ }
-  }
+  const target = inboxPath(ctx, call.to);
   const entry = {
     from: ctx.agentName,
     text: call.text,
@@ -194,15 +343,42 @@ function dispatchTeamSend(call, ctx) {
     read: false
   };
   if (call.summary) entry.summary = call.summary;
-  current.push(entry);
-  const tmp = `${target}.tmp.${process.pid}.${Date.now()}`;
-  fs.writeFileSync(tmp, JSON.stringify(current, null, 2), "utf8");
-  fs.renameSync(tmp, target);
-  return { ok: true, recipient: call.to };
+
+  try {
+    return withInboxLock(target, () => {
+      let current = [];
+      if (fs.existsSync(target)) {
+        try {
+          const parsed = JSON.parse(fs.readFileSync(target, "utf8"));
+          if (Array.isArray(parsed)) current = parsed;
+          else throw new Error("inbox not an array");
+        } catch (e) {
+          // Preserve corrupt file for forensic recovery before overwriting.
+          const broken = `${target}.broken.${Date.now()}.json`;
+          try { fs.copyFileSync(target, broken); } catch { /* best-effort */ }
+          current = [];
+        }
+      }
+      current.push(entry);
+      const tmp = `${target}.tmp.${process.pid}.${Date.now()}`;
+      fs.writeFileSync(tmp, JSON.stringify(current, null, 2), "utf8");
+      fs.renameSync(tmp, target);
+      return { ok: true, recipient: call.to };
+    });
+  } catch (e) {
+    return { ok: false, error: `inbox write failed: ${e.message}` };
+  }
 }
 
 function dispatchEditFile(call, opts) {
-  const target = path.resolve(opts.cwd, call.path);
+  const env = opts.env ?? process.env;
+  if (!isWriteAllowed(env)) {
+    return { ok: false, error: "edit_file blocked: set CODEX_DELEGATE_WRITES=enabled to opt in" };
+  }
+  let target;
+  try { target = safeResolveInWorkspace(call.path, opts.cwd); }
+  catch (e) { return { ok: false, error: e.message }; }
+
   if (!fs.existsSync(target)) return { ok: false, error: `path not found: ${call.path}` };
   let content;
   try { content = fs.readFileSync(target, "utf8"); }
@@ -222,20 +398,43 @@ function dispatchEditFile(call, opts) {
 }
 
 function dispatchWriteFile(call, opts) {
-  const target = path.resolve(opts.cwd, call.path);
+  const env = opts.env ?? process.env;
+  if (!isWriteAllowed(env)) {
+    return { ok: false, error: "write_file blocked: set CODEX_DELEGATE_WRITES=enabled to opt in" };
+  }
+  let target;
+  try { target = safeResolveInWorkspace(call.path, opts.cwd); }
+  catch (e) { return { ok: false, error: e.message }; }
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, call.content, "utf8");
   return { ok: true, path: call.path };
 }
 
 function dispatchRunBash(call, opts) {
+  const env = opts.env ?? process.env;
+  if (!isWriteAllowed(env)) {
+    return { ok: false, error: "run_bash blocked: set CODEX_DELEGATE_WRITES=enabled to opt in" };
+  }
+  const inspect = inspectBashCommand(call.command, env);
+  if (!inspect.allowed) return { ok: false, error: `run_bash blocked: ${inspect.reason}` };
+
+  // Resolve cwd inside workspace if specified.
+  let runCwd = opts.cwd;
+  if (call.cwd) {
+    try { runCwd = safeResolveInWorkspace(call.cwd, opts.cwd); }
+    catch (e) { return { ok: false, error: `run_bash cwd: ${e.message}` }; }
+  }
+
+  // execFileSync — no shell. argv[0] is the program, argv[1..] are args.
+  const [program, ...args] = inspect.argv;
   try {
-    const out = execSync(call.command, {
-      cwd: call.cwd ? path.resolve(opts.cwd, call.cwd) : opts.cwd,
+    const out = execFileSync(program, args, {
+      cwd: runCwd,
       timeout: call.timeout_ms ?? 30000,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
-      maxBuffer: 1024 * 1024
+      maxBuffer: 1024 * 1024,
+      env
     });
     return { ok: true, stdout: out, stderr: "" };
   } catch (e) {
@@ -311,9 +510,9 @@ export function dispatchToolCalls(calls, opts = {}) {
     try {
       switch (call.tool) {
         case "team_send": res = dispatchTeamSend(call, ctx); break;
-        case "edit_file": res = dispatchEditFile(call, { cwd }); break;
-        case "write_file": res = dispatchWriteFile(call, { cwd }); break;
-        case "run_bash": res = dispatchRunBash(call, { cwd }); break;
+        case "edit_file": res = dispatchEditFile(call, { cwd, env }); break;
+        case "write_file": res = dispatchWriteFile(call, { cwd, env }); break;
+        case "run_bash": res = dispatchRunBash(call, { cwd, env }); break;
         case "ask_lead": res = dispatchAskLead(call, ctx); break;
         case "push_notification": res = dispatchPushNotification(call, ctx); break;
         case "todo_write": res = dispatchTodoWrite(call, ctx); break;

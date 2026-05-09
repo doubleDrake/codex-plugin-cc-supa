@@ -6,6 +6,23 @@ Linear Project: [codex-plugin-cc-plus fork](https://linear.app/supalead/project/
 
 ## [Unreleased]
 
+### Fixed — adversarial review follow-ups (W6.A SUP-384, post-SUP-383 hardening)
+
+`/codex:adversarial-review --base 7808c92^` against the schema-validated tool calls (W5 SUP-383) and surrounding W2–W5 work surfaced two No-ship findings. Both addressed in `plugins/codex/scripts/lib/codex-tool-calls.mjs`.
+
+- **Fix #1 (critical) — delegate-mode tool-call bridge bypassed read-only sandbox**
+  - Before: `dispatchEditFile` / `dispatchWriteFile` resolved paths via `path.resolve(cwd, call.path)` with no workspace containment — absolute paths and `..` traversal opened arbitrary file overwrite. `dispatchRunBash` passed model-supplied strings to `execSync`, allowing arbitrary shell with substitution / chaining / redirection. Prompt-injected `codex-tool-calls` blocks (e.g. via README, issue body) could turn a read-only delegate run into local file/exec compromise.
+  - Now (a) write/exec tools (`edit_file` / `write_file` / `run_bash`) are blocked by default — opt in with `CODEX_DELEGATE_WRITES=enabled`; (b) paths go through `safeResolveInWorkspace()` which rejects absolute paths, `..` segments, and symlink-out (deepest existing ancestor + tail trick handles non-existent targets); (c) `run_bash` uses `execFileSync` (no shell), splits on whitespace, requires the first token to be in an allowlist (default 25 read-mostly programs; override via `CODEX_BASH_ALLOWLIST=tok1,tok2`), and rejects shell metacharacters `;|&$<>` `` ` `` `()` outright.
+  - Communication tools (`team_send` / `ask_lead` / `push_notification` / `todo_write`) remain default-allowed — they only touch this team's inbox artifacts under `CLAUDE_CONFIG_DIR/teams/...`.
+- **Fix #2 (high) — `team_send` concurrent write race / silent corrupt overwrite**
+  - Before: read-modify-rename of the recipient inbox JSON. Two concurrent senders read the same array, appended, and the last `renameSync` won — silently dropping the first message. Corrupt inbox files were also silently replaced, losing forensic data.
+  - Now `withInboxLock(target, fn)` wraps the read-append-write in a `link()`-based atomic mutex (cross-platform, zero deps; bounded random backoff with 2 s timeout). Corrupt inbox files are copied to `<member>.json.broken.<epoch>.json` before the fresh array is written, so recovery is possible.
+- **Fix #3 (low) — `CLAUDE_CONFIG_DIR` was captured at module load**
+  - Before: `CLAUDE_HOME` / `TEAMS_DIR` were module-level constants from `process.env`. Tests / multi-team callers passing a different `CLAUDE_CONFIG_DIR` via `opts.env` were ignored.
+  - Now `resolveTeamContext(env)` returns a context with the correct `teamsDir`, and `dispatchTeamSend` / friends use `ctx.teamsDir` exclusively. No behavior change for production (single-process default-env case); fixes test isolation.
+- **Tests** — `tests/codex-tool-calls.test.mjs` (28 cases): path-traversal / absolute / symlink-out rejection, opt-in flag enforcement on edit/write/bash, bash allowlist + metachar rejection (semicolon, pipe, `$()`, backtick, redirect), 10-process concurrent `team_send` with all-deliver assertion, corrupt inbox `.broken` preservation, fence-tag-vs-bare-`\`\`\`json` discrimination. All pass; full repo suite has zero regressions vs `7808c92^` baseline.
+- **Docs** — `prompts/delegate.md` adds a "Sandbox & safety (SUP-384)" section so codex's followup turns understand why a write call may come back blocked and what alternatives are available (prefer unified diff in MUST DO).
+
 ### Fixed — adversarial review follow-ups (W1 hardening)
 
 `/codex:adversarial-review` against the W1 stability fixes turned up three real edge cases. All addressed in the same commit; no new public API.

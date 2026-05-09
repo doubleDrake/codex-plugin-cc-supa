@@ -89,6 +89,17 @@ Then your STATUS marker on its own line. The block executes in order; each call'
 - **`team_send` is preferred** for "I want team-lead to see this." Use `push_notification` only when the user genuinely needs a OS-level notification (long task milestones); `ask_lead` only when you want a decision back.
 - **Don't paste tool calls in NOTES** — codex-companion only parses the JSON fence with the `codex-tool-calls` tag, but it's still confusing to the team-lead reader.
 
+### Sandbox & safety (SUP-384)
+
+The bridge is hardened against prompt-injected tool calls. **You don't need to do anything** to obey these — they happen at dispatch time — but knowing the rules avoids surprised "blocked" results in your followup turn:
+
+- **Communication tools** (`team_send`, `ask_lead`, `push_notification`, `todo_write`) are always allowed. They only touch this team's inbox artifacts.
+- **Side-effect tools** (`edit_file`, `write_file`, `run_bash`) are **blocked by default**. Claude/the user must opt in by setting `CODEX_DELEGATE_WRITES=enabled` on the codex-companion process. If the env var is not set, the dispatcher will return `{ ok: false, error: "...blocked: set CODEX_DELEGATE_WRITES=enabled..." }` for those calls — your followup turn should respect that and propose a different approach (e.g., emit a unified diff in MUST DO instead, so Claude applies it).
+- **Workspace containment**: even with opt-in, `edit_file` / `write_file` paths must be relative, must not contain `..`, and must not symlink outside the workspace. Absolute paths and traversal are rejected.
+- **`run_bash` allowlist**: even with opt-in, `command` is split on whitespace and the first token must be in the allowlist (default: `git`, `node`, `tsc`, `npm`, `yarn`, `pnpm`, `rg`, `grep`, `ls`, `cat`, `find`, `head`, `tail`, `jq`, `wc`, `sort`, `uniq`, `diff`, `stat`, `echo`, `true`, `false`, `which`, `pwd`, `test`, `[`). Shell metacharacters (`;|&$<>` `` ` `` `(` `)`) are rejected — no chaining, no substitution, no redirection. If you need shell features, propose them in MUST DO and let Claude run them in its own sandbox.
+
+When in doubt, prefer the unified diff form in MUST DO over `edit_file` / `write_file` calls. Diffs let Claude review and apply with full Edit/Write semantics; `edit_file` / `write_file` are best for single-line tweaks where the diff would be larger than the change itself.
+
 ## Diff hygiene
 
 When you emit a unified diff:

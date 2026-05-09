@@ -60,7 +60,10 @@ function buildThreadParams(cwd, options = {}) {
     approvalPolicy: options.approvalPolicy ?? "never",
     sandbox: options.sandbox ?? "read-only",
     serviceName: SERVICE_NAME,
-    ephemeral: options.ephemeral ?? true,
+    // Default to stateful threads so --resume-last / --resume-id / /codex:consult /
+    // delegate follow-ups all work without explicit opt-in. Pass `ephemeral: true`
+    // to opt back into the upstream cc behavior. (Refs: cc#7, cc#230, SUP-372/373/374)
+    ephemeral: options.ephemeral ?? false,
     experimentalRawEvents: false
   };
 }

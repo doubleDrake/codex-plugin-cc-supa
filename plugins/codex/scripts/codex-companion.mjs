@@ -77,7 +77,7 @@ function printUsage() {
       "  node scripts/codex-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--json]",
       "  node scripts/codex-companion.mjs review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>]",
       "  node scripts/codex-companion.mjs adversarial-review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [focus text]",
-      "  node scripts/codex-companion.mjs task [--background] [--write|--delegate-mode] [--resume-last|--resume|--fresh] [--model <model|spark>] [--effort <none|minimal|low|medium|high|xhigh>] [prompt]",
+      "  node scripts/codex-companion.mjs task [--background] [--write|--delegate-mode] [--resume-last|--resume|--resume-id <threadId>|--fresh] [--model <model|spark>] [--effort <none|minimal|low|medium|high|xhigh>] [prompt]",
       "  node scripts/codex-companion.mjs status [job-id] [--all] [--json]",
       "  node scripts/codex-companion.mjs result [job-id] [--json]",
       "  node scripts/codex-companion.mjs cancel [job-id] [--json]"
@@ -464,8 +464,13 @@ async function executeTaskRun(request) {
     resumeLast: request.resumeLast
   });
 
+  // Resume precedence: explicit --resume-id wins over --resume-last (auto-find latest).
+  // Both are mutually exclusive at the CLI parse layer; defense in depth here.
+  // Refs: cc#230 (SUP-374) — explicit thread ID for parallel workflows.
   let resumeThreadId = null;
-  if (request.resumeLast) {
+  if (request.resumeId) {
+    resumeThreadId = request.resumeId;
+  } else if (request.resumeLast) {
     const latestThread = await resolveLatestTrackedTaskThread(workspaceRoot, {
       excludeJobId: request.jobId
     });
@@ -603,7 +608,7 @@ function buildTaskJob(workspaceRoot, taskMetadata, write) {
   });
 }
 
-function buildTaskRequest({ cwd, model, effort, prompt, write, delegateMode = false, resumeLast, jobId }) {
+function buildTaskRequest({ cwd, model, effort, prompt, write, delegateMode = false, resumeLast, resumeId = null, jobId }) {
   return {
     cwd,
     model,
@@ -612,6 +617,7 @@ function buildTaskRequest({ cwd, model, effort, prompt, write, delegateMode = fa
     write,
     delegateMode,
     resumeLast,
+    resumeId,
     jobId
   };
 }
@@ -737,7 +743,7 @@ async function handleReview(argv) {
 
 async function handleTask(argv) {
   const { options, positionals } = parseCommandInput(argv, {
-    valueOptions: ["model", "effort", "cwd", "prompt-file"],
+    valueOptions: ["model", "effort", "cwd", "prompt-file", "resume-id"],
     booleanOptions: ["json", "write", "delegate-mode", "resume-last", "resume", "fresh", "background"],
     aliasMap: {
       m: "model"
@@ -752,8 +758,15 @@ async function handleTask(argv) {
 
   const resumeLast = Boolean(options["resume-last"] || options.resume);
   const fresh = Boolean(options.fresh);
+  const resumeId = typeof options["resume-id"] === "string" && options["resume-id"].trim() ? options["resume-id"].trim() : null;
   if (resumeLast && fresh) {
     throw new Error("Choose either --resume/--resume-last or --fresh.");
+  }
+  if (resumeId && resumeLast) {
+    throw new Error("Choose either --resume-id <threadId> or --resume/--resume-last (not both).");
+  }
+  if (resumeId && fresh) {
+    throw new Error("--resume-id and --fresh are mutually exclusive.");
   }
   const write = Boolean(options.write);
   const delegateMode = Boolean(options["delegate-mode"]);
@@ -784,6 +797,7 @@ async function handleTask(argv) {
       write,
       delegateMode,
       resumeLast,
+      resumeId,
       jobId: job.id
     });
     const { payload } = enqueueBackgroundTask(cwd, job, request);
@@ -803,6 +817,7 @@ async function handleTask(argv) {
         write,
         delegateMode,
         resumeLast,
+        resumeId,
         jobId: job.id,
         onProgress: progress
       }),

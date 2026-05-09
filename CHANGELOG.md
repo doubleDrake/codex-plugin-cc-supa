@@ -20,11 +20,21 @@ Linear Project: [codex-plugin-cc-plus fork](https://linear.app/supalead/project/
   - Previously the idle-timeout shutdown removed only the unix socket and pid file; the persisted `broker.json` session was left behind. A subsequent `/codex:setup` or status would try to reuse the dead endpoint.
   - Now `clearBrokerSession(cwd)` runs in `shutdown(server)` for both signal-driven and idle-timeout paths.
 
-### Documented — Agent Teams spike (SUP-377)
+### Documented — Agent Teams spike (SUP-377) + W5 follow-ups (SUP-378/379/380)
 
-- New `docs/agent-teams-poc.md` captures the Pattern A (Agent Teams) vs Pattern B (Monitor tool) comparison and the decision matrix for when each is worth the overhead.
-- `agents/codex-delegate.md` gets a "Multitasking" section pointing to the docs. The agent does NOT auto-spawn a team — opt in per call.
-- Spike conclusion: Pattern B (Monitor + per-job log) is the default; Pattern A is reserved for parallel sessions or larger team workflows.
+SUP-377 spike done as research + docs only. The three deferred follow-ups landed together so the multitasking story is complete instead of in pieces.
+
+- **SUP-377** — `docs/agent-teams-poc.md` captures Pattern A (Agent Teams) vs Pattern B (Monitor tool) decision matrix.
+- **SUP-378** — `commands/delegate.md` gains `--pane` flag (argument-hint only — runtime stays in `agents/codex-delegate.md`). When `--pane` is set the orchestrator opts into Pattern A: TeamCreate (or join existing), Agent spawn, SendMessage on phase events, TeamDelete on STATUS: DONE if it created the team.
+- **SUP-379** — `docs/monitor-filters.md` ships four pre-canned grep packs (`progress` / `verbose` / `terminal-only` / `errors-only`) for the Pattern B `Monitor` invocation. `agents/codex-delegate.md` references the `progress` pack as the canonical default. Patterns matched against the live transcript captured during testing.
+- **SUP-380** — `docs/supalead-team-integration.md` defines the rule for joining an existing supalead team (`Lead` + `pm` + `member-N`) instead of spawning a parallel codex-session team. Runtime code stays generic; supalead-specific behavior lives entirely in agent prompt rules.
+- `agents/codex-delegate.md` allowed-tools extended to include `Agent`, `SendMessage`, `TeamCreate`, `TeamDelete`, `Monitor` so the new flows actually work.
+
+The decision flow is now:
+
+- neither `--pane` nor `--background` → foreground turn-by-turn (default)
+- `--background` → Pattern B (Monitor with `progress` pack)
+- `--pane` → Pattern A (Agent Teams; reuse existing team if any)
 
 ## [1.0.4-supa.1] — 2026-05-09 (MVP complete)
 

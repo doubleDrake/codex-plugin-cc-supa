@@ -1,6 +1,6 @@
 ---
 description: Delegate a multi-step task to Codex with the A+ pattern — Codex proposes diffs (read-only), Claude applies them and reports back, looping until DONE
-argument-hint: "[--background|--wait] [--model <model|spark>] [--effort <none|minimal|low|medium|high|xhigh>] [--no-auto-context] <task description>"
+argument-hint: "[--background|--wait] [--pane] [--model <model|spark>] [--effort <none|minimal|low|medium|high|xhigh>] [--no-auto-context] <task description>"
 allowed-tools: Bash(node:*), AskUserQuestion, Agent, Edit, Write, Read, Grep, Glob
 ---
 

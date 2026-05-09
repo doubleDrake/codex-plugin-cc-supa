@@ -2,7 +2,7 @@
 name: codex-delegate
 description: Multi-turn orchestrator for the A+ delegate pattern. Use when the user asks for a substantial refactor, multi-file fix, or multi-step implementation that benefits from turn-by-turn progress. Codex thinks (read-only); Claude applies and verifies.
 model: sonnet
-tools: Bash, Edit, Write, Read, Grep, Glob, AskUserQuestion
+tools: Bash, Edit, Write, Read, Grep, Glob, AskUserQuestion, Agent, SendMessage, TeamCreate, TeamDelete, Monitor
 skills:
   - codex-cli-runtime
   - gpt-5-4-prompting
@@ -70,14 +70,60 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" task \
 - **Verification timeout**: If a single verification command runs >5 min, kill it and report to Codex.
 - **Critical decision**: If Codex's `MUST DO` proposes touching a file the user explicitly forbade in the task description, surface `AskUserQuestion` before applying.
 
-## Multitasking — when the user wants to keep working in the main pane
+## Multitasking — Pattern A (`--pane`) and Pattern B (`Monitor`)
 
-By default, this agent runs the loop foreground and the user watches it turn by turn. If they want to start a delegate session and keep working on something else in the main pane:
+Two opt-in modes when the user wants to keep working while codex runs.
 
-- **Quick path (recommended)** — `task --background --delegate-mode` + `Monitor` tool tail of the per-job log. Notifications arrive in the main pane as Codex progresses. No extra agents, no extra tokens. See `docs/agent-teams-poc.md` (Pattern B) for the exact `Monitor` invocation.
-- **Multi-pane path** — explicit user request only. Spawn a Claude wrapper subagent via `Agent({ team_name, name, subagent_type: "general-purpose" })`, have it run codex-companion + tail the log + `SendMessage` back to main. Real per-pane visibility, but every progress translation costs tokens. See `docs/agent-teams-poc.md` (Pattern A).
+### Pattern B — Monitor tool (no flag, recommended default for "I want updates while I work")
 
-Do not spawn a team automatically. The default UX (foreground turn-by-turn) is what most delegate sessions need; the team mode is opt-in for sessions running in parallel or alongside other long-running work.
+If the user says "run this and keep me posted while I work on X" but does NOT pass `--pane`, use Pattern B:
+
+1. Spawn `task --background --delegate-mode` and capture the `jobId` from stdout.
+2. Locate the per-job log: `~/.claude/plugins/data/codex-*/state/<workspace>/jobs/<jobId>.log`.
+3. Start `Monitor` with the canonical filter (full pack in `docs/monitor-filters.md`):
+   ```
+   Monitor(
+     description: "Codex delegate <jobId>",
+     command: "tail -F <logFile> | grep --line-buffered -E '\\[codex\\] (Turn|Running command|Reviewer|Applying|File changes|error|Codex error|Turn completed|Turn failed)'",
+     timeout_ms: 1800000,
+     persistent: false
+   )
+   ```
+4. Continue with whatever the user asked next. Notifications arrive inline as codex progresses. When `Turn completed` lands, follow up with the apply step (Edit/Write the proposed diff, run verification).
+
+No extra agents, no extra tokens beyond the Bash spawn.
+
+### Pattern A — `--pane` flag (Agent Teams, real per-pane visibility)
+
+If the user passes `--pane`, opt into the team workflow:
+
+1. **Reuse existing team if any.** Read `~/.claude/teams/<team-name>/config.json` if a team is already in scope. Don't spawn a new team mid-session — that creates orphan team dirs. See `docs/supalead-team-integration.md` for the supalead-specific handoff rules (Lead/pm/member already running, etc.).
+2. **Otherwise create one.** `TeamCreate({ team_name: "codex-session-<short-ts>", description: "Codex delegate: <short task summary>" })`.
+3. **Spawn the runner** in that team:
+   ```
+   Agent({
+     team_name: "<team>",
+     name: "codex-runner-<n>",
+     subagent_type: "general-purpose",
+     prompt: "<full delegated task + Auto-Context + instruction: run task --background --delegate-mode, tail log, SendMessage to main on every [codex] event, send final result on STATUS: DONE>"
+   })
+   ```
+4. **Continue main work.** The runner's pane shows live progress; SendMessage notifications surface in main when significant events fire.
+5. **On completion**, the runner emits `STATUS: DONE` plus the result, and `TeamDelete` runs from main if this team was created just for the codex session (skip if it pre-existed).
+
+### When neither — just `--wait` (default)
+
+Single delegate, no multitasking, watch turn-by-turn in the main pane. This is the original `/codex:delegate` UX and stays the default when neither `--pane` nor `--background` is set.
+
+### Decision flow
+
+```
+--pane present?  → Pattern A (Agent Teams)
+--background present?  → Pattern B (Monitor) — default for background
+neither?  → Foreground turn-by-turn
+```
+
+Do not silently upgrade a `--background` call to Pattern A; the team primitive has setup cost the user should opt into explicitly.
 
 ## Out of scope
 

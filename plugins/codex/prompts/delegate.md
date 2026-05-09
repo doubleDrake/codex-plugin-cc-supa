@@ -51,6 +51,44 @@ Anything that doesn't fit above: open questions, alternatives you considered and
 ### STATUS
 Last line. Either `STATUS: NEEDS_FOLLOW_UP` or `STATUS: DONE`. No other text on this line.
 
+## Tool calls — schema-validated bridge to Claude Code primitives (SUP-383)
+
+When you need to send a status update, ask the team-lead a question, edit a file, run a verification command, or trigger any other action that crosses the codex/Claude boundary, **emit a single fenced JSON block** named `codex-tool-calls`. The codex-companion runtime parses it, validates against `schemas/codex-tool-calls.schema.json`, and dispatches each call locally. **No SendMessage / Edit / Write / Bash invented prose** — the JSON block is the only honored channel.
+
+Block placement: anywhere in your response, but exactly one block per turn. The fence tag `codex-tool-calls` is mandatory; bare `\`\`\`json` blocks are ignored (so you can quote example schemas in NOTES without firing them).
+
+### Available tools
+
+| `tool` | What it does | Required keys |
+|---|---|---|
+| `team_send` | Append message to a teammate's inbox (= Claude Code SendMessage) | `to`, `text` (+optional `summary`) |
+| `edit_file` | Replace `old_string` with `new_string` in `path` (= Claude Code Edit) | `path`, `old_string`, `new_string` (+optional `replace_all`) |
+| `write_file` | Create/overwrite file with `content` (= Claude Code Write) | `path`, `content` |
+| `run_bash` | Run a shell command synchronously (= Claude Code Bash) | `command` (+optional `timeout_ms`, `cwd`) |
+| `ask_lead` | Format a decision request to team-lead with options + context | `question` (+optional `context`, `options[]`) |
+| `push_notification` | Surface a one-line notification to the user (= Claude Code PushNotification) | `message` (≤200 chars) |
+| `todo_write` | Ask team-lead to mirror a todo list (= Claude Code TodoWrite) | `items[]` with `subject` (+optional `description`, `activeForm`, `status`) |
+
+### Example block
+
+```json codex-tool-calls
+[
+  { "tool": "team_send", "to": "team-lead", "text": "Phase 1 complete — 3 candidate files identified", "summary": "checkpoint" },
+  { "tool": "edit_file", "path": "scripts/codex-companion.mjs", "old_string": "case \"task-worker\":\n      await handleTaskWorker(argv);\n      break;", "new_string": "case \"task-worker\":\n      await handleTaskWorker(argv);\n      break;\n    case \"consult\":\n      await handleConsult(argv);\n      break;" },
+  { "tool": "ask_lead", "question": "Use JSDoc block or inline trailing comment?", "options": ["JSDoc", "inline"], "context": "documenting MODEL_ALIASES in scripts/codex-companion.mjs" }
+]
+```
+
+Then your STATUS marker on its own line. The block executes in order; each call's success/failure is reported back via stderr in the codex-companion log so you and team-lead can audit dispatch.
+
+### Hard rules for tool calls
+
+- **Schema is the contract.** If you emit fields not in the schema, the call is rejected — don't try to be creative.
+- **One block per turn.** Multiple `\`\`\`json codex-tool-calls\`\`\`` fences in the same response: only the first is honored.
+- **Order = side-effect order.** `edit_file` then `run_bash` will edit before running. Plan accordingly.
+- **`team_send` is preferred** for "I want team-lead to see this." Use `push_notification` only when the user genuinely needs a OS-level notification (long task milestones); `ask_lead` only when you want a decision back.
+- **Don't paste tool calls in NOTES** — codex-companion only parses the JSON fence with the `codex-tool-calls` tag, but it's still confusing to the team-lead reader.
+
 ## Diff hygiene
 
 When you emit a unified diff:

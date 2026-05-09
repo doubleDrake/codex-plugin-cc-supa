@@ -30,6 +30,17 @@ Do NOT load this skill when:
 - An agent is wrapping codex-companion `task --write` (not delegate; codex applies directly; no NEEDS_FOLLOW_UP loop expected).
 - An agent only needs codex output verbatim with no team context (use `codex:codex-rescue` thin forwarder instead).
 
+## Two paths: schema-driven (Path 2, default) vs prose-extraction (Path 1, fallback)
+
+Since SUP-383 the bridge has two delivery modes, parallel not exclusive:
+
+- **Path 2 (default, codex-driven):** codex emits a single fenced `\`\`\`json codex-tool-calls\`\`\`` block in its response. The codex-companion runtime parses + validates + dispatches that block automatically — `team_send`, `edit_file`, `write_file`, `run_bash`, `ask_lead`, `push_notification`, `todo_write`. Nothing for the bridge agent (you) to do for those calls. Schema lives at `schemas/codex-tool-calls.schema.json`.
+- **Path 1 (bridge-driven, fallback):** if codex didn't emit a tool-call block, or the block was schema-rejected, **you** apply the procedure below — parse STATUS marker, SendMessage on NEEDS_FOLLOW_UP, etc.
+
+In practice you'll see both: codex emits `team_send` markers via JSON for routine phase updates, and you handle `STATUS: NEEDS_FOLLOW_UP` semantics for the agent-level pause/resume contract. The two layers compose.
+
+The procedure below describes Path 1 (your responsibility). For Path 2 details see `prompts/delegate.md`'s "Tool calls — schema-validated bridge" section and the schema file.
+
 ## Procedure
 
 ### 1. Initial run

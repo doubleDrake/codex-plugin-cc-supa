@@ -20,6 +20,23 @@ Linear Project: [codex-plugin-cc-plus fork](https://linear.app/supalead/project/
   - Previously the idle-timeout shutdown removed only the unix socket and pid file; the persisted `broker.json` session was left behind. A subsequent `/codex:setup` or status would try to reuse the dead endpoint.
   - Now `clearBrokerSession(cwd)` runs in `shutdown(server)` for both signal-driven and idle-timeout paths.
 
+### Added — schema-validated tool calls (SUP-383) — codex emits, companion dispatches
+
+User feedback after the live `--pane` demo: "translate it via a schema (sh/yaml/json) so codex can't freelance and Claude/Codex updates only touch the schema." Path 2 from the agent-teams-poc spike, fully implemented.
+
+- New `plugins/codex/schemas/codex-tool-calls.schema.json` — JSON Schema (draft 2020-12) defining 7 tool calls codex is allowed to emit. Schema is THE contract; updates to Claude Code or Codex change only this file.
+- New `plugins/codex/scripts/lib/codex-tool-calls.mjs` (~340 LoC, zero deps): fence regex `\`\`\`json codex-tool-calls\`\`\``, JSON.parse + manual schema validator (Ajv-free, cc-upstream policy), dispatcher with per-tool handler.
+- 7 tools: `team_send` (inbox direct write — SendMessage equivalent), `edit_file` / `write_file` / `run_bash` (file ops), `ask_lead` (decision request → team_send), `push_notification` (stderr + team_send fallback), `todo_write` (formatted team_send for team-lead's TodoWrite tool).
+- `scripts/codex-companion.mjs` `executeTaskRun` integrates: when `delegateMode` is set and the codex response contains a fenced tool-calls block, parse → validate → dispatch → report results to stderr (`[codex-tool-calls] ...`) + payload (`payload.toolCalls`). All other paths bypass.
+- `prompts/delegate.md` adds a "Tool calls — schema-validated bridge" section with the table of 7 tools, an example block, and hard rules (one block per turn, schema is contract, don't quote in NOTES).
+- `skills/codex-team-bridge/SKILL.md` (SUP-381) now distinguishes Path 2 (codex-driven, automatic) from Path 1 (bridge-driven, fallback). Bridge agent's responsibility shrinks to STATUS marker / NEEDS_FOLLOW_UP semantics; routine phase updates are codex-emitted JSON.
+
+Why JSON not YAML: cc-upstream stays npm-clean (no js-yaml), `JSON.parse` handles nested arrays/objects, codex is fluent in JSON output. Mini-YAML parser was attempted and abandoned after `todo_write.items` (nested array of objects) broke it.
+
+Verified end-to-end via isolated test: 7-tool sample block parses, validates with 0 errors, dispatches the file/bash/notification calls cleanly; team-bound calls correctly fail-fast on `CLAUDE_TEAM_NAME` unset; bare `\`\`\`json` blocks (no `codex-tool-calls` tag) are ignored.
+
+Refs SUP-381 (codex-team-bridge skill), SUP-382 (inbox spike). Sources surveyed for tool selection: [Piebald-AI/claude-code-system-prompts](https://github.com/Piebald-AI/claude-code-system-prompts), [zep-us/claude-system-prompt](https://github.com/zep-us/claude-system-prompt), [Yuyz0112/claude-code-reverse](https://github.com/Yuyz0112/claude-code-reverse), [Kir Shatrov's Reverse engineering Claude Code](https://kirshatrov.com/posts/claude-code-internals), [@anthropic-ai/claude-agent-sdk](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk).
+
 ### Added — codex-team-bridge skill (SUP-381) — translation layer
 
 User feedback during the live `--pane` demo: ping-pong rules belong in a skill, not inlined in agent prompts. Reasons: progressive disclosure, reuse across team-aware agents, clearer responsibility boundary. The skill IS the translate layer between Codex (which knows nothing about Agent Teams) and Claude Code's SendMessage / Agent / TeamCreate primitives.

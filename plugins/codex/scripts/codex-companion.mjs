@@ -54,6 +54,7 @@ import {
   SESSION_ID_ENV
 } from "./lib/tracked-jobs.mjs";
 import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
+import { processCodexResponse } from "./lib/codex-tool-calls.mjs";
 import {
   renderNativeReviewResult,
   renderReviewResult,
@@ -505,6 +506,37 @@ async function executeTaskRun(request) {
 
   const rawOutput = typeof result.finalMessage === "string" ? result.finalMessage : "";
   const failureMessage = result.error?.message ?? result.stderr ?? "";
+
+  // Schema-validated tool call dispatch (SUP-383). Only delegate-mode opts in;
+  // /codex:rescue and other paths bypass this so non-delegate flows aren't
+  // surprised by a tool-call block in the response.
+  let toolCallReport = null;
+  if (request.delegateMode && rawOutput) {
+    try {
+      toolCallReport = processCodexResponse(rawOutput, {
+        env: process.env,
+        cwd: request.cwd ?? workspaceRoot
+      });
+      if (toolCallReport.found) {
+        const summary = toolCallReport.error
+          ? `tool-call block found but failed: ${toolCallReport.error}`
+          : `dispatched ${toolCallReport.results?.length ?? 0} tool call(s)`;
+        process.stderr.write(`[codex-tool-calls] ${summary}\n`);
+        if (Array.isArray(toolCallReport.results)) {
+          for (const r of toolCallReport.results) {
+            const tag = r.ok ? "ok" : "fail";
+            const detail = r.ok
+              ? (r.path ?? r.recipient ?? "")
+              : (r.error ?? "?");
+            process.stderr.write(`[codex-tool-calls]   ${r.tool} ${tag} ${detail}\n`);
+          }
+        }
+      }
+    } catch (e) {
+      process.stderr.write(`[codex-tool-calls] dispatch crashed: ${e.message}\n`);
+    }
+  }
+
   const rendered = renderTaskResult(
     {
       rawOutput,
@@ -522,7 +554,8 @@ async function executeTaskRun(request) {
     threadId: result.threadId,
     rawOutput,
     touchedFiles: result.touchedFiles,
-    reasoningSummary: result.reasoningSummary
+    reasoningSummary: result.reasoningSummary,
+    toolCalls: toolCallReport
   };
 
   return {

@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/doubleDrake/codex-plugin-cc-supa/schemas/codex-tool-calls.schema.json",
+  "title": "codex-tool-calls",
+  "description": "Tool calls Codex emits in its final delegate response. The codex-companion runtime parses one fenced ```yaml codex-tool-calls block, validates against this schema, and dispatches each call locally (file edits, inbox writes, bash). Codex never invokes Claude Code primitives directly — this schema is the bridge contract. Claude or Codex updates change ONLY this file.",
+  "type": "array",
+  "items": {
+    "$ref": "#/$defs/ToolCall"
+  },
+  "$defs": {
+    "ToolCall": {
+      "oneOf": [
+        { "$ref": "#/$defs/TeamSend" },
+        { "$ref": "#/$defs/EditFile" },
+        { "$ref": "#/$defs/WriteFile" },
+        { "$ref": "#/$defs/RunBash" },
+        { "$ref": "#/$defs/AskLead" },
+        { "$ref": "#/$defs/PushNotification" },
+        { "$ref": "#/$defs/TodoWrite" }
+      ]
+    },
+    "TeamSend": {
+      "description": "Append a message to a teammate's inbox file. Effect = SendMessage tool.",
+      "type": "object",
+      "required": ["tool", "to", "text"],
+      "additionalProperties": false,
+      "properties": {
+        "tool":    { "const": "team_send" },
+        "to":      { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+        "text":    { "type": "string", "minLength": 1, "maxLength": 4000 },
+        "summary": { "type": "string", "maxLength": 200 }
+      }
+    },
+    "EditFile": {
+      "description": "Find old_string in path and replace with new_string (single occurrence). Effect = Edit tool.",
+      "type": "object",
+      "required": ["tool", "path", "old_string", "new_string"],
+      "additionalProperties": false,
+      "properties": {
+        "tool":       { "const": "edit_file" },
+        "path":       { "type": "string", "minLength": 1 },
+        "old_string": { "type": "string", "minLength": 1 },
+        "new_string": { "type": "string" },
+        "replace_all": { "type": "boolean", "default": false }
+      }
+    },
+    "WriteFile": {
+      "description": "Create or overwrite a file at path with content. Effect = Write tool.",
+      "type": "object",
+      "required": ["tool", "path", "content"],
+      "additionalProperties": false,
+      "properties": {
+        "tool":    { "const": "write_file" },
+        "path":    { "type": "string", "minLength": 1 },
+        "content": { "type": "string" }
+      }
+    },
+    "RunBash": {
+      "description": "Run a shell command synchronously. Output (stdout + stderr) is included in the dispatch report. Effect = Bash tool.",
+      "type": "object",
+      "required": ["tool", "command"],
+      "additionalProperties": false,
+      "properties": {
+        "tool":       { "const": "run_bash" },
+        "command":    { "type": "string", "minLength": 1, "maxLength": 8000 },
+        "timeout_ms": { "type": "integer", "minimum": 100, "maximum": 600000, "default": 30000 },
+        "cwd":        { "type": "string" }
+      }
+    },
+    "AskLead": {
+      "description": "Convenience wrapper around team_send that formats a decision request to team-lead and signals NEEDS_FOLLOW_UP. The companion does NOT halt the codex thread; codex must still emit STATUS: NEEDS_FOLLOW_UP at the end of the response for the bridge skill / agent to recognize the pause point.",
+      "type": "object",
+      "required": ["tool", "question"],
+      "additionalProperties": false,
+      "properties": {
+        "tool":     { "const": "ask_lead" },
+        "question": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "context":  { "type": "string", "maxLength": 1000 },
+        "options":  {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "maxItems": 8
+        }
+      }
+    },
+    "PushNotification": {
+      "description": "Surface a notification to the user — typically when a long-running task hits a milestone they'd want to know about (long codex run finished, error needs attention). Companion writes to stderr + falls back to team_send to team-lead so the message reaches the user even if Claude Code's PushNotification primitive is unreachable. Use sparingly: most events should go via team_send instead. Effect ≈ Claude Code's PushNotification tool.",
+      "type": "object",
+      "required": ["tool", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "tool":    { "const": "push_notification" },
+        "message": { "type": "string", "minLength": 1, "maxLength": 200 }
+      }
+    },
+    "TodoWrite": {
+      "description": "Ask team-lead to track a structured todo list. Companion forwards as a formatted team_send (team-lead can then call its own TodoWrite tool to persist). Useful when codex wants to plan visible multi-step work. Effect ≈ Claude Code's TodoWrite tool, mediated by team-lead.",
+      "type": "object",
+      "required": ["tool", "items"],
+      "additionalProperties": false,
+      "properties": {
+        "tool":  { "const": "todo_write" },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 30,
+          "items": {
+            "type": "object",
+            "required": ["subject"],
+            "additionalProperties": false,
+            "properties": {
+              "subject":     { "type": "string", "minLength": 1, "maxLength": 200 },
+              "description": { "type": "string", "maxLength": 1000 },
+              "activeForm":  { "type": "string", "maxLength": 200 },
+              "status":      { "enum": ["pending", "in_progress", "completed"], "default": "pending" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

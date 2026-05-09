@@ -48,7 +48,7 @@ Examples:
 ```
 /codex:delegate refactor the auth middleware to use JWT tokens
 /codex:delegate find and fix the race condition in OrderService
-/codex:delegate --model gpt-5.4 migrate the cache layer from in-memory to Redis
+/codex:delegate --model gpt-5.5 migrate the cache layer from in-memory to Redis
 /codex:delegate --no-auto-context just answer this — what does this regex do?
 ```
 

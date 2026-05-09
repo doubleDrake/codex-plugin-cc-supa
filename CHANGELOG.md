@@ -20,6 +20,10 @@ Linear Project: [codex-plugin-cc-plus fork](https://linear.app/supalead/project/
   - Previously the idle-timeout shutdown removed only the unix socket and pid file; the persisted `broker.json` session was left behind. A subsequent `/codex:setup` or status would try to reuse the dead endpoint.
   - Now `clearBrokerSession(cwd)` runs in `shutdown(server)` for both signal-driven and idle-timeout paths.
 
+### Fixed — fork-original docs reference gpt-5.5 (default era for this fork)
+
+- `commands/delegate.md` and `commands/consult.md` example invocations updated from `--model gpt-5.4` to `--model gpt-5.5` to match the current codex CLI default era. Fork-original files only; cc-upstream files (`agents/codex-rescue.md`, `README.md`, `tests/*`, `skills/gpt-5-4-prompting/SKILL.md`) keep upstream's wording to stay rebase-clean. The `gpt-5-4-prompting` skill name is upstream's helper name (5.4-era); it applies equally to 5.5 and renaming would diverge from cc.
+
 ### Documented — Agent Teams spike (SUP-377) + W5 follow-ups (SUP-378/379/380)
 
 SUP-377 spike done as research + docs only. The three deferred follow-ups landed together so the multitasking story is complete instead of in pieces.

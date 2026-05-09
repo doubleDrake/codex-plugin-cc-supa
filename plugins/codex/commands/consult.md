@@ -38,7 +38,7 @@ Examples:
 /codex:consult how does the auth middleware actually work in this repo?
 /codex:consult what would break if we replaced session tokens with JWT?
 /codex:consult --fresh I want to explore caching strategies — different topic
-/codex:consult --model gpt-5.4 dig deeper on the JWT migration cost
+/codex:consult --model gpt-5.5 dig deeper on the JWT migration cost
 ```
 
 Refs Linear SUP-373 (W3.2). Implements cc#7 (stale at upstream for 1.5 months).

@@ -6,6 +6,20 @@ Linear Project: [codex-plugin-cc-plus fork](https://linear.app/supalead/project/
 
 ## [Unreleased]
 
+### Fixed — adversarial review follow-ups (W1 hardening)
+
+`/codex:adversarial-review` against the W1 stability fixes turned up three real edge cases. All addressed in the same commit; no new public API.
+
+- **Fix #1 (high) — `sendBrokerShutdown` socket leak on timeout** — `lib/broker-lifecycle.mjs`
+  - Previously, the 5 s timeout resolved the promise but did NOT close the underlying `net.Socket`. A referenced open socket could keep the SessionEnd hook process alive — defeating the timeout in the exact case it was meant to fix (broker accepts but never replies).
+  - Now `socket.destroy()` runs in the `finish()` path before resolving, plus the resolution carries a `{ timedOut }` payload for callers that want to record telemetry.
+- **Fix #2 (high) — `crashed` transition is now persisted** — `lib/job-control.mjs`
+  - Previously `enrichJob` set `status: "crashed"` only on the in-memory copy. Stored jobs stayed `running`, so `resolveResultJob` refused to fetch them via `/codex:result`, and `resolveCancelableJob` could still target a dead PID (false-positive kill risk under PID reuse).
+  - Now the transition writes back to both `state.json` (via `upsertJob`) and the per-job `<id>.json` file. `resolveResultJob` accepts `crashed` as a finished state. `resolveCancelableJob` runs an enrichment pass first, then filters out jobs whose PID is gone — preventing stale-PID kills.
+- **Fix #3 (medium) — broker idle shutdown clears `broker.json`** — `app-server-broker.mjs`
+  - Previously the idle-timeout shutdown removed only the unix socket and pid file; the persisted `broker.json` session was left behind. A subsequent `/codex:setup` or status would try to reuse the dead endpoint.
+  - Now `clearBrokerSession(cwd)` runs in `shutdown(server)` for both signal-driven and idle-timeout paths.
+
 ### Future (MVP-out)
 
 - **SUP-377** [P5] Agent Teams integration PoC — see Linear issue. Stays in Backlog as a separate research effort after MVP stabilization.

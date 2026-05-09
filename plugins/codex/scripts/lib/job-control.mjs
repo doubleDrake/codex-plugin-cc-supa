@@ -1,7 +1,7 @@
 import fs from "node:fs";
 
 import { getSessionRuntimeStatus } from "./codex.mjs";
-import { getConfig, listJobs, readJobFile, resolveJobFile } from "./state.mjs";
+import { getConfig, listJobs, readJobFile, resolveJobFile, upsertJob, writeJobFile } from "./state.mjs";
 import { SESSION_ID_ENV } from "./tracked-jobs.mjs";
 import { resolveWorkspaceRoot } from "./workspace.mjs";
 
@@ -21,6 +21,10 @@ function checkProcessAlive(pid) {
   } catch {
     return false;
   }
+}
+
+function nowIsoSafe() {
+  try { return new Date().toISOString(); } catch { return null; }
 }
 
 function tailLogLines(logFile, count = 3) {
@@ -207,6 +211,12 @@ export function enrichJob(job, options = {}) {
   // Detect zombie jobs — status says running/queued but the worker PID is gone.
   // Auto-transitions to `crashed` and surfaces last log lines so callers don't
   // wait forever on a dead worker. (Refs: cc#264/#164/#202/#222)
+  //
+  // Adversarial review fix (W1 follow-up): the crashed transition must be
+  // PERSISTED to state.json. Otherwise downstream selectors (resolveResultJob,
+  // resolveCancelableJob) read raw stored jobs and never see the crashed
+  // status — `/codex:result` can't fetch it, `/codex:cancel` may target a
+  // dead PID (false-positive kill risk under PID reuse).
   if (
     (enriched.status === "running" || enriched.status === "queued") &&
     enriched.pid &&
@@ -220,6 +230,37 @@ export function enrichJob(job, options = {}) {
     enriched.status = "crashed";
     enriched.phase = "crashed";
     enriched.errorMessage = enriched.errorMessage ?? errorMessage;
+
+    // Persist the transition. workspaceRoot is on the stored job (set by
+    // tracked-jobs createJobRecord); fall back to the options.cwd if not.
+    const ws = enriched.workspaceRoot ?? options.workspaceRoot ?? null;
+    if (ws) {
+      try {
+        upsertJob(ws, {
+          id: enriched.id,
+          status: "crashed",
+          phase: "crashed",
+          pid: null,
+          errorMessage: enriched.errorMessage,
+          completedAt: nowIsoSafe()
+        });
+        // Also patch the per-job file so subsequent reads see the same state.
+        const jobFile = resolveJobFile(ws, enriched.id);
+        if (fs.existsSync(jobFile)) {
+          const stored = readJobFile(jobFile);
+          writeJobFile(ws, enriched.id, {
+            ...stored,
+            status: "crashed",
+            phase: "crashed",
+            pid: null,
+            errorMessage: enriched.errorMessage,
+            completedAt: stored.completedAt ?? new Date().toISOString()
+          });
+        }
+      } catch {
+        // Best-effort persist; the in-memory enrichment is still correct.
+      }
+    }
   }
 
   return {
@@ -303,11 +344,21 @@ export function buildSingleJobSnapshot(cwd, reference, options = {}) {
 
 export function resolveResultJob(cwd, reference) {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
+  // Run an enrichment pass first so any zombie job (PID gone) gets persisted
+  // to `crashed` before selection. Without this, `/codex:result <id>` would
+  // refuse to fetch a dead-but-still-marked-running job. Refs: adversarial
+  // review W1 follow-up #2.
+  const rawJobs = sortJobsNewestFirst(reference ? listJobs(workspaceRoot) : filterJobsForCurrentSession(listJobs(workspaceRoot)));
+  for (const job of rawJobs) {
+    if ((job.status === "running" || job.status === "queued") && job.pid && !checkProcessAlive(job.pid)) {
+      enrichJob(job, { workspaceRoot });
+    }
+  }
   const jobs = sortJobsNewestFirst(reference ? listJobs(workspaceRoot) : filterJobsForCurrentSession(listJobs(workspaceRoot)));
   const selected = matchJobReference(
     jobs,
     reference,
-    (job) => job.status === "completed" || job.status === "failed" || job.status === "cancelled"
+    (job) => job.status === "completed" || job.status === "failed" || job.status === "cancelled" || job.status === "crashed"
   );
 
   if (selected) {
@@ -328,8 +379,18 @@ export function resolveResultJob(cwd, reference) {
 
 export function resolveCancelableJob(cwd, reference, options = {}) {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
+  const rawJobs = sortJobsNewestFirst(listJobs(workspaceRoot));
+  // Skip cancellation candidates whose PID is already dead — avoids targeting
+  // a stale PID that may have been reused by another process. Run enrichJob
+  // pass first so the zombie status is persisted, then filter on the fresh
+  // list. Refs: adversarial review W1 follow-up #2.
+  for (const job of rawJobs) {
+    if ((job.status === "running" || job.status === "queued") && job.pid && !checkProcessAlive(job.pid)) {
+      enrichJob(job, { workspaceRoot });
+    }
+  }
   const jobs = sortJobsNewestFirst(listJobs(workspaceRoot));
-  const activeJobs = jobs.filter((job) => job.status === "queued" || job.status === "running");
+  const activeJobs = jobs.filter((job) => (job.status === "queued" || job.status === "running") && (!job.pid || checkProcessAlive(job.pid)));
 
   if (reference) {
     const selected = matchJobReference(activeJobs, reference);

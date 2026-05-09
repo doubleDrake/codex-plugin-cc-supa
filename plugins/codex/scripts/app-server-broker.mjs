@@ -8,6 +8,7 @@ import process from "node:process";
 import { parseArgs } from "./lib/args.mjs";
 import { BROKER_BUSY_RPC_CODE, CodexAppServerClient } from "./lib/app-server.mjs";
 import { parseBrokerEndpoint } from "./lib/broker-endpoint.mjs";
+import { clearBrokerSession } from "./lib/broker-lifecycle.mjs";
 
 const STREAMING_METHODS = new Set(["turn/start", "review/start", "thread/compact/start"]);
 
@@ -138,6 +139,12 @@ async function main() {
     if (pidFile && fs.existsSync(pidFile)) {
       fs.unlinkSync(pidFile);
     }
+    // Adversarial review fix (W1 follow-up): on idle self-shutdown, the
+    // persistent `broker.json` session must also be cleared. Otherwise a
+    // later /codex:setup or status call sees a stale endpoint and tries
+    // to reuse a dead broker. Best-effort; broker state may be on a
+    // different filesystem / unreadable after partial cleanup.
+    try { clearBrokerSession(cwd); } catch { /* best-effort */ }
   }
 
   appClient.setNotificationHandler(routeNotification);

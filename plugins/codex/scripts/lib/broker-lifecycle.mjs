@@ -46,24 +46,32 @@ export async function waitForBrokerEndpoint(endpoint, timeoutMs = 2000) {
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5000;
 
 export async function sendBrokerShutdown(endpoint, timeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS) {
-  await new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(), timeoutMs);
-    timer.unref?.();
-    const finish = () => {
-      clearTimeout(timer);
-      resolve();
-    };
+  return new Promise((resolve) => {
+    let settled = false;
     const socket = connectToEndpoint(endpoint);
+    // Adversarial review fix (W1 follow-up): on timeout we MUST destroy the
+    // socket. Otherwise a referenced open socket can keep the SessionEnd hook
+    // process alive — defeating the timeout's purpose for the exact case it
+    // was meant to fix (broker accepted connection but never replied).
+    const finish = (timedOut = false) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { socket.destroy(); } catch { /* best-effort */ }
+      resolve({ timedOut });
+    };
+    const timer = setTimeout(() => finish(true), timeoutMs);
+    timer.unref?.();
     socket.setEncoding("utf8");
     socket.on("connect", () => {
       socket.write(`${JSON.stringify({ id: 1, method: "broker/shutdown", params: {} })}\n`);
     });
     socket.on("data", () => {
       socket.end();
-      finish();
+      finish(false);
     });
-    socket.on("error", finish);
-    socket.on("close", finish);
+    socket.on("error", () => finish(false));
+    socket.on("close", () => finish(false));
   });
 }
 

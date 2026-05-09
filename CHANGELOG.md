@@ -20,6 +20,14 @@ Linear Project: [codex-plugin-cc-plus fork](https://linear.app/supalead/project/
   - Previously the idle-timeout shutdown removed only the unix socket and pid file; the persisted `broker.json` session was left behind. A subsequent `/codex:setup` or status would try to reuse the dead endpoint.
   - Now `clearBrokerSession(cwd)` runs in `shutdown(server)` for both signal-driven and idle-timeout paths.
 
+### Added — codex-team-bridge skill (SUP-381) — translation layer
+
+User feedback during the live `--pane` demo: ping-pong rules belong in a skill, not inlined in agent prompts. Reasons: progressive disclosure, reuse across team-aware agents, clearer responsibility boundary. The skill IS the translate layer between Codex (which knows nothing about Agent Teams) and Claude Code's SendMessage / Agent / TeamCreate primitives.
+
+- New `plugins/codex/skills/codex-team-bridge/SKILL.md` (~140 lines): full procedure for an agent that wraps `codex-companion task --delegate-mode` inside a team — initial run, phase update to team-lead, parse STATUS, three branches (DONE / NEEDS_FOLLOW_UP / malformed), 5-turn hard cap, plus a translation cheat-sheet of "Codex says X → bridge does Y" and "team-lead says X → bridge does Y".
+- `agents/codex-delegate.md` frontmatter `skills` extended with `codex-team-bridge`. The "Bridging Codex ↔ team-lead" section in the agent now points to the skill instead of inlining the full procedure (~30 lines moved out, ~15 left as quick summary).
+- Reusable: any future team-aware agent that wraps codex-companion can pull the same skill (e.g. a `codex-rescue` variant that joins a supalead team).
+
 ### Fixed — fork-original docs reference gpt-5.5 (default era for this fork)
 
 - `commands/delegate.md` and `commands/consult.md` example invocations updated from `--model gpt-5.4` to `--model gpt-5.5` to match the current codex CLI default era. Fork-original files only; cc-upstream files (`agents/codex-rescue.md`, `README.md`, `tests/*`, `skills/gpt-5-4-prompting/SKILL.md`) keep upstream's wording to stay rebase-clean. The `gpt-5-4-prompting` skill name is upstream's helper name (5.4-era); it applies equally to 5.5 and renaming would diverge from cc.

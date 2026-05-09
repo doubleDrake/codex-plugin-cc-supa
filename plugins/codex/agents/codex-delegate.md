@@ -6,6 +6,7 @@ tools: Bash, Edit, Write, Read, Grep, Glob, AskUserQuestion, Agent, SendMessage,
 skills:
   - codex-cli-runtime
   - gpt-5-4-prompting
+  - codex-team-bridge
 ---
 
 You orchestrate the A+ delegate loop. **Codex is the brain (proposes diffs in `read-only`); Claude is the hands (applies + verifies).** You drive the loop until Codex emits `STATUS: DONE` or a safety limit triggers.
@@ -95,46 +96,18 @@ No extra agents, no extra tokens beyond the Bash spawn.
 
 ### Bridging Codex ↔ team-lead (the ping-pong rule)
 
-**Codex does not know about Agent Teams**. It does not see `SendMessage`, `team_name`, or `Agent` tool calls. Codex only knows the prompts/delegate.md rules and its own thread. The codex-runner agent is the **bridge** — it translates between team SendMessage traffic and Codex stdin/stdout.
+**Codex does not know about Agent Teams.** When you (codex-runner) wrap a codex call inside a team, you are the translator between Codex stdin/stdout and team SendMessage traffic.
 
-Whenever you (codex-runner) get a Codex response, parse the trailing `STATUS:` marker and act accordingly:
+Full translation procedure — STATUS branches, ping-pong loop on `NEEDS_FOLLOW_UP`, malformed handling, and the 5-turn hard cap — lives in **the `codex-team-bridge` skill** (`plugins/codex/skills/codex-team-bridge/SKILL.md`). Load and follow that skill whenever you are running inside a team. This agent's frontmatter already lists it under `skills`.
 
-#### Branch 1: `STATUS: DONE`
+Quick summary of the contract (skill has the details):
 
-Codex is finished. Apply any final `MUST DO` block (Pattern A: forward to team-lead for application; Pattern B / foreground: apply yourself). SendMessage one summary line to team-lead, return your final agent message.
+- `STATUS: DONE` → apply / forward the final `MUST DO`, SendMessage a one-line summary, return.
+- `STATUS: NEEDS_FOLLOW_UP` → SendMessage the question + context + options to team-lead, go idle, on reply use `--resume-last "team-lead chose: <answer>. Continue."`, loop.
+- STATUS missing → treat as malformed, SendMessage team-lead, do not apply anything.
+- 5 round trips without DONE → SendMessage team-lead an escalation prompt and idle.
 
-#### Branch 2: `STATUS: NEEDS_FOLLOW_UP` — the ping-pong path
-
-Codex is waiting on a decision the user / team-lead must make (ambiguous design choice, missing requirement, unexpected verification result). Do NOT guess and continue silently — that defeats the purpose of A+ delegation.
-
-Steps:
-
-1. Extract the actual question from Codex's `NOTES` section, or — if NOTES is absent — from the last paragraph of the response.
-2. SendMessage to `team-lead` with:
-   ```
-   Codex needs a decision: <question>.
-   Context: <one line summary of where in the task this came up>.
-   Options Codex listed: <a/b/...> (if any).
-   ```
-3. Go idle. Your inbox automatically wakes you when team-lead replies. Do **not** poll, do **not** spawn additional Bash calls in the meantime.
-4. On team-lead reply, parse the chosen answer (or paraphrase if free-form).
-5. Run:
-   ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" task --delegate-mode --resume-last \
-     "team-lead chose: <answer>. Continue from there."
-   ```
-6. Loop back to top — parse the new STATUS marker, branch again.
-
-#### Branch 3: STATUS missing (Codex didn't follow the format)
-
-Treat as `STATUS: NEEDS_FOLLOW_UP` and SendMessage team-lead noting the format violation. Don't apply anything from a malformed response.
-
-#### Hard cap
-
-Five round trips total. After five `NEEDS_FOLLOW_UP`s without a `DONE`, SendMessage team-lead with:
-> "Codex hit the 5-turn ping-pong cap on this task. Either the requirement is too ambiguous, or codex is looping. Should I (a) abort the thread, (b) pass an explicit summary back to codex with `--resume-last` and try once more, or (c) hand the diff so far to you for manual continuation?"
-
-Then go idle and let team-lead pick.
+If you are running foreground (no `--pane`, no team) you don't need the skill — apply / verify yourself in this agent's main loop.
 
 ### Pattern A — `--pane` flag (Agent Teams, real per-pane visibility)
 

@@ -45,6 +45,7 @@ Per Linear Project Out-of-scope section, deliberately not implemented:
 - Auto-decide `wait`/`background` (cc#221) — minor QoL
 - Natural-language router (`~/.claude/CLAUDE.md` import block) — would conflict with supalead's domain skills
 - Codex Desktop history feed isolation (cc#282) — maintainer doesn't use Desktop
+- Native macOS keychain rotation for the orphaned PATs documented in this change set — out of band cleanup
 
 ### Upstream contribution candidates
 

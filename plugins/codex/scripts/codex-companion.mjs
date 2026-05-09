@@ -80,7 +80,7 @@ function printUsage() {
       "  node scripts/codex-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--json]",
       "  node scripts/codex-companion.mjs review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>]",
       "  node scripts/codex-companion.mjs adversarial-review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [focus text]",
-      "  node scripts/codex-companion.mjs task [--background] [--write|--delegate-mode] [--resume-last|--resume|--resume-id <threadId>|--fresh] [--model <model|spark>] [--effort <none|minimal|low|medium|high|xhigh>] [prompt]",
+      "  node scripts/codex-companion.mjs task [--background] [--write|--delegate-mode] [--resume-last|--resume|--resume-id <threadId>|--fresh] [--model <model|spark>] [--effort <none|minimal|low|medium|high|xhigh>] [--context <text>] [prompt]",
       "  node scripts/codex-companion.mjs consult [--fresh] [--background] [--model <model|spark>] [topic or follow-up]",
       "  node scripts/codex-companion.mjs status [job-id] [--all] [--json]",
       "  node scripts/codex-companion.mjs result [job-id] [--json]",
@@ -747,7 +747,7 @@ async function handleReview(argv) {
 
 async function handleTask(argv) {
   const { options, positionals } = parseCommandInput(argv, {
-    valueOptions: ["model", "effort", "cwd", "prompt-file", "resume-id"],
+    valueOptions: ["model", "effort", "cwd", "prompt-file", "resume-id", "context"],
     booleanOptions: ["json", "write", "delegate-mode", "resume-last", "resume", "fresh", "background"],
     aliasMap: {
       m: "model"
@@ -777,11 +777,20 @@ async function handleTask(argv) {
   if (write && delegateMode) {
     throw new Error("--write and --delegate-mode are mutually exclusive (delegate is read-only by contract).");
   }
+  // --context <text> (SUP-376): explicit additional context the caller wants Codex to
+  // see, separate from the user's main prompt. Appended with a clear separator so
+  // Codex can distinguish background from the actual ask. Composes with Auto-Context
+  // (SUP-375) — caller-injected Auto-Context comes inside rawPrompt, --context is
+  // additional. Refs cc#284, cc PR#293.
+  const contextText = typeof options.context === "string" && options.context.trim() ? options.context.trim() : null;
+  const promptWithContext = contextText
+    ? `${rawPrompt}\n\n## Additional Context (--context)\n${contextText}\n`
+    : rawPrompt;
   // Delegate mode: read-only sandbox, prepend prompts/delegate.md as system instruction.
   // The user prompt is appended after the template's `## User task\n---` footer.
   const prompt = delegateMode
-    ? `${loadPromptTemplate(ROOT_DIR, "delegate")}\n\n${rawPrompt}`
-    : rawPrompt;
+    ? `${loadPromptTemplate(ROOT_DIR, "delegate")}\n\n${promptWithContext}`
+    : promptWithContext;
   const taskMetadata = buildTaskRunMetadata({
     prompt: rawPrompt,
     resumeLast,

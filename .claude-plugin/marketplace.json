@@ -1,19 +1,24 @@
 {
-  "name": "openai-codex",
+  "name": "doubledrake-codex-supa",
   "owner": {
-    "name": "OpenAI"
+    "name": "doubleDrake (fork)"
   },
   "metadata": {
-    "description": "Codex plugins to use in Claude Code for delegation and code review.",
-    "version": "1.0.4"
+    "description": "Fork of openai/codex-plugin-cc with broker idle timeout, PID liveness check, A+ delegate pattern, stateful thread, and consult command. See CHANGELOG for differences from upstream.",
+    "version": "1.0.4-supa.0",
+    "fork": {
+      "upstream": "openai/codex-plugin-cc",
+      "purpose": "supalead environment alignment + absorb cc issues stale at upstream (#7/#108/#230/#264/#245/#288)",
+      "linearProject": "https://linear.app/supalead/project/codex-plugin-cc-plus-fork-codex-안정성-a-delegate-990176b8d08b"
+    }
   },
   "plugins": [
     {
       "name": "codex",
-      "description": "Use Codex from Claude Code to review code or delegate tasks.",
-      "version": "1.0.4",
+      "description": "Codex plugin (fork) — see CHANGELOG for fork-specific changes (broker idle timeout, A+ delegate, stateful thread, consult).",
+      "version": "1.0.4-supa.0",
       "author": {
-        "name": "OpenAI"
+        "name": "doubleDrake (fork)"
       },
       "source": "./plugins/codex"
     }

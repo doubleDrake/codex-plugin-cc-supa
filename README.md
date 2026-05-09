@@ -1,5 +1,23 @@
 # Codex plugin for Claude Code
 
+> ## ⚠️ Fork notice
+>
+> This is a community fork of [openai/codex-plugin-cc](https://github.com/openai/codex-plugin-cc) maintained at [doubleDrake/codex-plugin-cc-supa](https://github.com/doubleDrake/codex-plugin-cc-supa). Tracked via Linear Project [codex-plugin-cc-plus fork](https://linear.app/supalead/project/codex-plugin-cc-plus-fork-codex-안정성-a-delegate-990176b8d08b).
+>
+> **Planned differences from upstream** (see Linear sub-issues SUP-365~377; current state: meta-only fork, no code changes yet):
+> - **Broker idle timeout** (10 min) — cc#108
+> - **PID liveness check** + crashed status auto-transition — cc#264/#164/#202/#222
+> - **`sendBrokerShutdown` 5 s timeout** — cc#245/#288 (PR#293 reference)
+> - **A+ delegate command** (`/codex:delegate`) — Codex=brain, Claude=hand pattern
+> - **Stateful thread default** — `ephemeral: false`
+> - **`/codex:consult` command** — cc#7
+> - **`--resume-id <threadId>` flag** — cc#230
+> - **Auto-Context prefix rule** in agents
+>
+> See [CHANGELOG.md](./CHANGELOG.md) for the running list.
+>
+> **Install (fork)**: `/plugin marketplace add doubleDrake/codex-plugin-cc-supa` then `/plugin install codex@doubledrake-codex-supa`.
+
 Use Codex from inside Claude Code for code reviews or to delegate tasks to Codex.
 
 This plugin is for Claude Code users who want an easy way to start using Codex from the workflow

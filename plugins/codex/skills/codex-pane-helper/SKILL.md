@@ -52,12 +52,21 @@ Agent({
   team_name: "<team-name>",
   name: `codex-runner-${shortId}`,
   subagent_type: "codex:codex-delegate",   // not "general-purpose" — codex-delegate has the loop logic
-  prompt: `${autoContextBlock}\n\n${userTaskText}`
+  prompt: `team_name="${teamName}", agent_name="codex-runner-${shortId}".
+When invoking codex-companion, prepend:
+  CLAUDE_TEAM_NAME="${teamName}" CLAUDE_AGENT_NAME="codex-runner-${shortId}" \\
+    node ...
+This is required for codex-tool-calls JSON blocks (team_send / ask_lead /
+push_notification / todo_write) emitted by codex to dispatch successfully.
+
+${autoContextBlock}
+
+${userTaskText}`
 })
 ```
 
 - `subagent_type: "codex:codex-delegate"` is critical — it loads `codex-team-bridge` skill automatically and knows the STATUS protocol. Don't downgrade to `general-purpose` and re-implement the loop.
-- The runner inherits `CLAUDE_TEAM_NAME` and `CLAUDE_AGENT_NAME` env vars from spawn — both are needed for `team_send` dispatch from inside `codex-tool-calls.mjs` (SUP-383).
+- **Env injection is NOT automatic** (verified W6 codex-native-test, 2026-05-10): Claude Code Agent Teams runtime does not auto-inject `CLAUDE_TEAM_NAME` into the runner's process env. The spawn prompt must tell the runner to prepend these vars when calling codex-companion. Without them, codex-tool-calls block dispatch hits `no team context (CLAUDE_TEAM_NAME unset)` and team-bound tools are skipped.
 - `prompt` should already include the Auto-Context block; the runner does not re-collect it.
 
 ### Step 3 — initial dispatch

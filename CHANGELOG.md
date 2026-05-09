@@ -6,6 +6,20 @@ Linear Project: [codex-plugin-cc-plus fork](https://linear.app/supalead/project/
 
 ## [Unreleased]
 
+### Fixed — W6.E Pattern A env injection (follow-up to SUP-378/386)
+
+`codex-native-test` end-to-end 시연 (2026-05-10 KST 01:07)에서 발견: **Claude Code Agent Teams runtime이 멤버 process에 `CLAUDE_TEAM_NAME` env를 자동 inject 안 함**. 결과적으로 codex-runner agent (subagent_type: codex:codex-delegate)가 codex-companion 호출 시 env가 비어있어 `codex-tool-calls.mjs` `dispatchTeamSend`가 `no team context (CLAUDE_TEAM_NAME unset)` 으로 fail.
+
+- 1차 시연: codex가 codex-tool-calls JSON 블록 정상 emit, companion이 fence parse + validate 통과, dispatch 시도 시 team context 없어서 `team_send` skip.
+- env explicit prefix 후 재시도: `[codex-tool-calls] dispatched 1 tool call(s)` → `team_send ok team-lead` ✅. **cyan color로 team-lead inbox 도착** (codex가 native channel로 직접 보낸 첫 message — Pattern A의 의도된 그림 verified).
+
+영구 fix (prompt-only, 코드 0):
+
+- `agents/codex-delegate.md` Turn 1 + Follow-up call: `CLAUDE_TEAM_NAME="<team>" CLAUDE_AGENT_NAME="<self>" \` env prefix 명시 (team 안에서 실행 시 필수). Without these vars, team-bound tools (`team_send` / `ask_lead` / `push_notification` / `todo_write`) silently skip.
+- `skills/codex-pane-helper/SKILL.md` Step 2: runner spawn prompt에 env inject 룰 inline. Agent Teams runtime이 auto-inject 안 한다는 사실을 W6 verified로 명문화. 이로써 모든 미래 Pattern A 호출은 자동으로 정상 동작.
+
+Refs SUP-378 (Pattern A `--pane`), SUP-386 (codex-pane-helper skill), SUP-383 (codex-tool-calls bridge). codex-native-test 멤버 `codex-runner`가 직접 시연 + 회신.
+
 ### Fixed — W6.D P0 보안 follow-up (SUP-391) — bash sub-flag deny + Auto-Context redaction
 
 W6 team-mode 시연 중 project-reviewer 멤버가 W6.A SUP-384 fix의 잔존 P0 결함 2건 catch. 즉시 fix.

@@ -25,13 +25,16 @@ You orchestrate the A+ delegate loop. **Codex is the brain (proposes diffs in `r
    - Strip routing flags (`--background`, `--wait`, `--model`, `--effort`, `--no-auto-context`, `--resume`, `--fresh`) from the user request — they go to `codex-companion`, not into the prompt text.
    - Unless `--no-auto-context` is set, prepend an Auto-Context block (cwd, branch, `git status --short`, `git log --oneline -5`, `git diff --name-only HEAD` capped at 10 entries). One short Bash call collects all five.
    - **Redact before prefixing (SUP-391 W6.D)**: route the Auto-Context block through `plugins/codex/scripts/lib/redact.mjs` `redactSecrets()` (see `agents/codex-rescue.md` for the one-shot pipeline) so commit msg / branch / filename secrets (`sk-*`, `ghp_*`, `AKIA*`, JWT, PEM, `password=`) are replaced with `[REDACTED]` before reaching OpenAI.
-2. Invoke Codex once, foreground:
+2. Invoke Codex once, foreground. **If you are running inside a team** (your spawn prompt contained `team_name=...`, or `CLAUDE_TEAM_NAME` env is already set), **prepend env vars** so codex-tool-calls dispatched by the companion can resolve the inbox path. Without these vars, `team_send` / `ask_lead` / `push_notification` / `todo_write` calls fail with `no team context (CLAUDE_TEAM_NAME unset)`:
    ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" task \
+   CLAUDE_TEAM_NAME="<team>" \
+   CLAUDE_AGENT_NAME="<self>" \
+     node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" task \
      --delegate-mode \
      [--model <model>] [--effort <effort>] \
      "<auto-context block>\n\n<stripped user task>"
    ```
+   Foreground (no team): omit the env prefix; only file edits / bash dispatch (with `CODEX_DELEGATE_WRITES=enabled`) are honored.
 3. Tell the user one short line: `Delegate started — Codex analyzing.` Do not paraphrase Codex output yet.
 
 ### Turn 2..N — Apply / verify / follow-up
@@ -59,8 +62,11 @@ After each Codex turn:
    - `Codex: DONE — closing thread.`
 
 ### Follow-up call
+Inherit the same `CLAUDE_TEAM_NAME` / `CLAUDE_AGENT_NAME` env from Turn 1 if running in a team:
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" task \
+CLAUDE_TEAM_NAME="<team>" \
+CLAUDE_AGENT_NAME="<self>" \
+  node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" task \
   --delegate-mode \
   --resume-last \
   "<follow-up prompt>"

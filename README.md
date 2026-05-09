@@ -27,9 +27,19 @@ they already have.
 
 ## What You Get
 
+- **`/codex <natural-language request>`** — single entry point. Claude classifies the request and dispatches to the right sub-action. Examples:
+  - `/codex 인증 미들웨어 JWT로 리팩터해줘` → `delegate`
+  - `/codex 이 PR 리뷰해줘` → `review`
+  - `/codex 이 디자인 어떻게 생각해?` → `consult`
+  - `/codex 좀비 잡 있어?` → `status`
+  - Use `--as <action>` for explicit override; ambiguous prompts trigger one AskUserQuestion.
 - `/codex:review` for a normal read-only Codex review
 - `/codex:adversarial-review` for a steerable challenge review
+- `/codex:delegate` for a multi-step A+ delegation (Codex=brain, Claude=hand) — fork-original
+- `/codex:consult` for design discussions / Q&A with persistent per-workspace thread — fork-original
 - `/codex:rescue`, `/codex:status`, `/codex:result`, and `/codex:cancel` to delegate work and manage background jobs
+
+All ten commands are first-class; `/codex` is just a router on top of the nine specific ones (INV-1: direct aliases keep working).
 
 ## Requirements
 

@@ -6,6 +6,17 @@ Linear Project: [codex-plugin-cc-plus fork](https://linear.app/supalead/project/
 
 ## [Unreleased]
 
+### Added — `/codex` natural-language entry (W6.B SUP-385)
+
+User feedback: "현재 `/codex` blah blah 명령어 너무 많은데 사용성 관점에서 단순화하면 좋겠어. 자연어로 처리할수있게하면 더 좋을것같고." Nine specific commands (`/codex:rescue`, `/codex:delegate`, `/codex:consult`, `/codex:review`, `/codex:adversarial-review`, `/codex:status`, `/codex:result`, `/codex:cancel`, `/codex:setup`) were friction for casual use. New `/codex` command is a single natural-language router.
+
+- New `plugins/codex/commands/codex.md` (~140 lines): four-step protocol (explicit override via `--as <action>` → classification by signal words in KO+EN → ambiguity guard via single AskUserQuestion when action choice would change the result → direct dispatch to the chosen sub-action via `Agent` for delegate/rescue and `Bash`+`codex-companion` for the rest).
+- Classification table covers `delegate` (multi-file refactor / implement / migrate), `rescue` (single-shot small fix), `consult` (design / Q&A / explore), `review` (read-only feedback), `adversarial-review` (challenge the approach), `status` / `result` / `cancel` (job ops), `setup` (install check). Both Korean and English signal words are first-class.
+- Runtime flags (`--background`, `--wait`, `--pane`, `--model`, `--effort`, `--no-auto-context`, `--base`, `--scope`, `--fresh`) flow through unchanged. `--as <action>` is the only routing flag and is stripped before forwarding.
+- INV-1 preserved: all nine direct aliases continue to work exactly as before. `/codex` is an additive entry, not a replacement.
+- INV-4 preserved: `/codex` does NOT auto-import `~/.claude/CLAUDE.md` marker blocks (the rejected pattern from supalead environments). The user explicitly types `/codex <text>`; no implicit hook.
+- README "What You Get" + plugin.json description updated to surface the new entry.
+
 ### Fixed — adversarial review follow-ups (W6.A SUP-384, post-SUP-383 hardening)
 
 `/codex:adversarial-review --base 7808c92^` against the schema-validated tool calls (W5 SUP-383) and surrounding W2–W5 work surfaced two No-ship findings. Both addressed in `plugins/codex/scripts/lib/codex-tool-calls.mjs`.

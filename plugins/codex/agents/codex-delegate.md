@@ -35,6 +35,8 @@ You orchestrate the A+ delegate loop. **Codex is the brain (proposes diffs in `r
      "<auto-context block>\n\n<stripped user task>"
    ```
    Foreground (no team): omit the env prefix; only file edits / bash dispatch (with `CODEX_DELEGATE_WRITES=enabled`) are honored.
+
+   **Streaming events (SUP-392 W6.F)**: when running inside a team, codex CLI's progress events (Turn started / Running command / Reviewer / Applying / error / STATUS markers) are auto-forwarded as `team_send` to team-lead during the codex turn — not just at completion. This means team-lead sees natural ping-pong updates while codex is still running, not a single batched message at the end. Filtering follows the canonical `docs/monitor-filters.md` grep pack; rapid streams are throttled to 1 SendMessage per 500 ms. Opt out per-call with `CODEX_STREAM_FORWARD=disabled` env or override the recipient with `CODEX_STREAM_FORWARD_TO=<name>` (default `team-lead`).
 3. Tell the user one short line: `Delegate started — Codex analyzing.` Do not paraphrase Codex output yet.
 
 ### Turn 2..N — Apply / verify / follow-up

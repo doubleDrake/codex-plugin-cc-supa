@@ -24,6 +24,7 @@ import { readStdinIfPiped } from "./lib/fs.mjs";
 import { collectReviewContext, ensureGitRepository, resolveReviewTarget } from "./lib/git.mjs";
 import { binaryAvailable, terminateProcessTree } from "./lib/process.mjs";
 import { redactSecrets } from "./lib/redact.mjs";
+import { wrapProgressForTeam } from "./lib/codex-stream-forward.mjs";
 import { loadPromptTemplate, interpolateTemplate } from "./lib/prompts.mjs";
 import {
   clearConsultThread,
@@ -462,6 +463,12 @@ async function executeReviewRun(request) {
 
 
 async function executeTaskRun(request) {
+  // SUP-392 (W6.F): when running inside a team (env CLAUDE_TEAM_NAME set),
+  // wrap onProgress so meaningful streaming events (Turn started, Running
+  // command, error, STATUS, ...) also dispatch as team_send to team-lead.
+  // No-op when team context is absent or CODEX_STREAM_FORWARD=disabled.
+  request = { ...request, onProgress: wrapProgressForTeam(request.onProgress) };
+
   const workspaceRoot = resolveWorkspaceRoot(request.cwd);
   ensureCodexAvailable(request.cwd);
 

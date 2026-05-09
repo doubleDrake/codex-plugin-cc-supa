@@ -6,6 +6,38 @@ Linear Project: [codex-plugin-cc-plus fork](https://linear.app/supalead/project/
 
 ## [Unreleased]
 
+### Added — W6.F codex streaming events → SendMessage forwarder (SUP-392)
+
+User feedback (2026-05-10): "codex가 동작할 때 native로 응답 받는 구조보다는 툭 던져놓으면 이게 스트리밍으로 답이 들어오는게 아니라 한꺼번에 오는 구조인데 이것 또한 그냥 지금 너랑 대화하듯 자연스럽게 핑퐁되면 좋을 것 같아."
+
+Pattern A 시연 흐름이 turn-end 까지 batch 였음. codex CLI 자체는 stderr 로 progress events streaming (Turn started / Running command / Reviewer / Applying / error / STATUS) 를 emit 하고 있었지만 codex-companion 의 onProgress callback 안에서 log/stderr 로만 흘러가고 team-lead inbox 까지 가지 않았음. 결과: codex 가 1m+ 동안 작업할 때 team-lead 는 끝까지 아무 update 도 못 받음.
+
+이 wave 에서 onProgress callback 을 wrap 해 의미있는 event 마다 즉시 `team_send` dispatch (SUP-383 인프라 재활용). team context (env CLAUDE_TEAM_NAME) 자동 detect; team 안에서는 default ON, foreground 단독 호출에서는 no-op (zero overhead). throttle 1 SendMessage / 500 ms 로 inbox spam 방지.
+
+- New `plugins/codex/scripts/lib/codex-stream-forward.mjs` (~140 LoC, zero deps): `wrapProgressForTeam(callback, opts)` factory. canonical event pattern set (`Turn started|Running command|Reviewer|Applying|error|STATUS:`) + phase-based fallback (starting/running/applying/verifying/completed/failed/crashed/finalizing/needs-follow-up). Opt-out via `CODEX_STREAM_FORWARD=disabled`/`0`/`false`/`off`. Recipient override via `CODEX_STREAM_FORWARD_TO=<name>` (default `team-lead`).
+- `plugins/codex/scripts/codex-companion.mjs` `executeTaskRun` 첫 줄: `request.onProgress = wrapProgressForTeam(request.onProgress)`. 모든 task call site (handleTask / consult / delegate-mode resume / ...) 가 자동 적용 — call site 변경 0.
+- `plugins/codex/agents/codex-delegate.md` Turn 1 호출 line 에 streaming 동작 명시 (자동 ON, opt-out flag).
+- 24 신규 regression test (`tests/codex-stream-forward.test.mjs`): pattern matching (turn/command/reviewer/error/STATUS/phase), env gating (CLAUDE_TEAM_NAME / opt-out / override), wrap behavior (original fires + forward fires + throttle + opt-out short-circuit + thrown original isolation + recipient override). All 24 pass.
+
+흐름 비교:
+
+before (W6.E):
+```
+[codex-runner] (1m wait — 침묵)
+[codex-runner] Codex turn 완료 — HEAD 64cafa4, SECRET_PATTERNS 11개. (한 번에)
+```
+
+after (W6.F):
+```
+[codex-runner] [codex stream] (starting) Thread ready
+[codex-runner] [codex stream] (running) Running command: rg -n SECRET_PATTERNS
+[codex-runner] [codex stream] (running) Running command: git log -1
+[codex-runner] [codex stream] (completed) Turn completed
+[codex-runner] Codex turn 완료 — HEAD 64cafa4, SECRET_PATTERNS 11개.
+```
+
+Refs SUP-392 (this), SUP-378 (Pattern A `--pane`), SUP-383 (codex-tool-calls bridge — team_send dispatch infra), SUP-379 (Monitor grep filter pack — same event signatures), SUP-385 W6.E (env injection — same CLAUDE_TEAM_NAME pathway).
+
 ### Fixed — W6.E Pattern A env injection (follow-up to SUP-378/386)
 
 `codex-native-test` end-to-end 시연 (2026-05-10 KST 01:07)에서 발견: **Claude Code Agent Teams runtime이 멤버 process에 `CLAUDE_TEAM_NAME` env를 자동 inject 안 함**. 결과적으로 codex-runner agent (subagent_type: codex:codex-delegate)가 codex-companion 호출 시 env가 비어있어 `codex-tool-calls.mjs` `dispatchTeamSend`가 `no team context (CLAUDE_TEAM_NAME unset)` 으로 fail.

@@ -31,9 +31,24 @@ echo ""
 
 Prepend that block to the user's task text. The combined prompt gets passed as the positional argument to `codex-companion task`. The flag `--context "<extra text>"` (SUP-376) is for additional explicit context; it composes naturally with Auto-Context (Codex sees both).
 
+**Redact secrets before prepending (SUP-391 W6.D)**: pipe the collected block through redaction so commit messages, branch names, or filenames containing tokens (`sk-*`, `ghp_*`, `AKIA*`, `AIza*`, JWT, PEM, `password=`, etc.) become `[REDACTED]` before reaching OpenAI. The simplest one-shot:
+
+```bash
+AUTO_CTX="$(echo "$AUTO_CTX_RAW" | node -e "
+  let d='';
+  process.stdin.on('data',c=>d+=c).on('end',()=>{
+    import('${CLAUDE_PLUGIN_ROOT}/scripts/lib/redact.mjs').then(m=>{
+      process.stdout.write(m.redactSecrets(d));
+    });
+  });
+")"
+```
+
+Or call the codex-companion runtime entry that handles redaction internally (`--context` flag is auto-redacted as of SUP-391). If the in-process redact is not available, at minimum strip lines containing obvious secrets via `grep -v` rather than passing raw `git log` output.
+
 If `git` is not installed or the cwd is not a repo, drop the failing lines (suppress stderr, the fallback above already handles `branch`). Do not block on Auto-Context collection — if it takes more than a couple of seconds, proceed without it.
 
-Refs Linear SUP-375 (W4.1, prompt-only change).
+Refs Linear SUP-375 (W4.1, prompt-only change), SUP-391 (W6.D, redaction).
 
 Your only job is to forward the user's rescue request to the Codex companion script. Do not do anything else.
 

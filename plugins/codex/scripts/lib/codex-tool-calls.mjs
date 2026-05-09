@@ -90,6 +90,23 @@ const DEFAULT_BASH_ALLOWLIST = [
 // We forbid them outright in run_bash command strings.
 const SHELL_METACHARS = /[`$();&|<>]|\$\(/;
 
+// Sub-flag deny per allowlisted tool (SUP-391 W6.D follow-up to SUP-384).
+// First-token allowlist + metachar reject was insufficient: codex could
+// emit `node -e "..."`, `git -c core.editor=/tmp/evil rebase -i`, etc. and
+// pass since the head token was in the allowlist. This map encodes
+// per-tool dangerous flags. `null` value = head itself is unconditionally
+// rejected (e.g. `npx` always runs arbitrary code).
+const DANGEROUS_SUB_FLAGS = {
+  node: ["-e", "--eval", "-p", "--print", "-r", "--require", "--inspect-brk"],
+  git: ["-c", "-C", "--exec-path"],
+  npm: ["exec", "x"],
+  npx: null,
+  yarn: ["exec", "create", "dlx"],
+  pnpm: ["exec", "dlx", "create"],
+  find: ["-exec", "-execdir", "-okdir", "-fprintf"],
+  tsc: ["-p", "--project"]
+};
+
 /**
  * Parse the JSON body of a fenced codex-tool-calls block.
  * Returns an array of raw tool-call objects (validation is a separate step).
@@ -267,6 +284,30 @@ export function inspectBashCommand(command, env = process.env) {
       reason: `command '${head}' not in allowlist (env CODEX_BASH_ALLOWLIST to override): ${allowlist.join(",")}`
     };
   }
+
+  // Sub-flag deny check (SUP-391). `null` = head itself is rejected.
+  if (Object.prototype.hasOwnProperty.call(DANGEROUS_SUB_FLAGS, head)) {
+    const denyList = DANGEROUS_SUB_FLAGS[head];
+    if (denyList === null) {
+      return {
+        allowed: false,
+        reason: `command '${head}' is unconditionally rejected (runs arbitrary code by design)`
+      };
+    }
+    for (const arg of argv.slice(1)) {
+      // Match exact (--flag) or prefix (--flag=val).
+      const hit = denyList.some((deny) =>
+        arg === deny || arg.startsWith(deny + "=")
+      );
+      if (hit) {
+        return {
+          allowed: false,
+          reason: `sub-flag '${arg}' is denied for '${head}' (injection risk)`
+        };
+      }
+    }
+  }
+
   return { allowed: true, argv };
 }
 

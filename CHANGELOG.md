@@ -6,6 +6,26 @@ Linear Project: [codex-plugin-cc-plus fork](https://linear.app/supalead/project/
 
 ## [Unreleased]
 
+### Fixed — W6.D P0 보안 follow-up (SUP-391) — bash sub-flag deny + Auto-Context redaction
+
+W6 team-mode 시연 중 project-reviewer 멤버가 W6.A SUP-384 fix의 잔존 P0 결함 2건 catch. 즉시 fix.
+
+**Finding 1 — bash allowlist 의미적 약함**: W6.A는 첫 토큰 allowlist + shell metachar reject만 구현. 첫 토큰이 통과해도 sub-flag로 임의 코드 실행 가능 — `node -e ...`, `git -c core.editor=/tmp/evil rebase`, `npm exec <pkg>`, `find . -exec rm`, `tsc -p /tmp/evil` 등이 prompt-injected codex-tool-calls 블록으로 들어오면 `CODEX_DELEGATE_WRITES=enabled` 시 그대로 실행됐을 위험.
+
+**Finding 2 — Auto-Context redaction 부재**: agent prompt가 `git log --oneline -5` / `git status --short` / `git diff --name-only HEAD` 출력을 그대로 codex CLI로 prefix → OpenAI로 전송. commit msg / branch / filename에 실수로 들어간 토큰 (`sk-*`, `ghp_*`, `AKIA*`, JWT, PEM, `password=`)이 silent leak.
+
+**Fix**:
+
+- `plugins/codex/scripts/lib/codex-tool-calls.mjs` — `inspectBashCommand`에 `DANGEROUS_SUB_FLAGS` deny map. 8개 tool (node/git/npm/yarn/pnpm/find/tsc/npx)에 대해 위험 sub-flag/sub-command 명시 거부. `npx`는 head 자체가 임의 실행이라 `null`로 unconditional reject. 첫 토큰 allowlist 통과 + sub-flag deny 통과 + metachar reject 통과 = 3-layer defense.
+- `plugins/codex/scripts/lib/redact.mjs` (NEW, ~80 LoC) — secret pattern 9종 (sk-token / GitHub PAT 3종 / AWS / Google / Slack / PEM / JWT / kv-style password=) 매처. `redactSecrets(text)` 일괄 치환, `detectSecretShapes(text)` 진단 (어떤 패턴이 매치됐는지 — 매치된 텍스트는 안 노출).
+- `plugins/codex/scripts/codex-companion.mjs` — `buildTaskRequest`에서 `rawPrompt` + `--context` 둘 다 `redactSecrets` 통과 후 OpenAI로 전송. `import { redactSecrets } from "./lib/redact.mjs"` 상단에 추가.
+- `plugins/codex/agents/codex-rescue.md` + `agents/codex-delegate.md` — Auto-Context 룰에 redact 단계 명시. 한 줄 in-process pipe 예시 포함. defense-in-depth로 agent도 upstream에서 redact, codex-companion이 보강.
+- 28 신규 regression test (`tests/codex-tool-calls.test.mjs` 13 cases + `tests/redact.test.mjs` 17 cases): node `-e`/`--eval`, git `-c`/`-C`/`--exec-path`, npm `exec`, find `-exec`, tsc `-p`, npx unconditional reject; 정상 (`node script.js`, `git status`, `git log`) 통과 확인. Redact: 9 secret pattern 모두 catch + clean text 무변조 + multi-secret + key=value 구조 보존 + null/undefined 입력 안전.
+
+전체 test suite: 137 tests / 129 pass / 8 fail (baseline 동일 — 회귀 0).
+
+Refs SUP-391 (W6.D), SUP-384 (W6.A), SUP-383 (W6.A 원본). Catch 출처: codex-supa-team / project-reviewer 멤버 (2026-05-09 시연).
+
 ### Added — `codex-pane-helper` skill (W6.C SUP-386) — `--pane` automation packaged
 
 `/codex:delegate --pane` (and `/codex --pane` after W6.B) used to require the orchestrator to re-derive the five-step Pattern A flow (reuse/create team → Agent spawn → SendMessage → monitor → cleanup) every time. New skill encapsulates the procedure so any team-aware agent can opt in without copying the steps.

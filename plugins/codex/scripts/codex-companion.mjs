@@ -23,6 +23,7 @@ import {
 import { readStdinIfPiped } from "./lib/fs.mjs";
 import { collectReviewContext, ensureGitRepository, resolveReviewTarget } from "./lib/git.mjs";
 import { binaryAvailable, terminateProcessTree } from "./lib/process.mjs";
+import { redactSecrets } from "./lib/redact.mjs";
 import { loadPromptTemplate, interpolateTemplate } from "./lib/prompts.mjs";
 import {
   clearConsultThread,
@@ -815,10 +816,17 @@ async function handleTask(argv) {
   // Codex can distinguish background from the actual ask. Composes with Auto-Context
   // (SUP-375) — caller-injected Auto-Context comes inside rawPrompt, --context is
   // additional. Refs cc#284, cc PR#293.
-  const contextText = typeof options.context === "string" && options.context.trim() ? options.context.trim() : null;
+  //
+  // SUP-391 (W6.D): redact secret-shaped tokens before sending to OpenAI. The
+  // rawPrompt comes from the caller (agent prompt + Auto-Context block); --context
+  // is caller-supplied text. Both can leak commit-msg / branch / filename secrets.
+  // Defense-in-depth: agents are also expected to redact upstream.
+  const rawContext = typeof options.context === "string" && options.context.trim() ? options.context.trim() : null;
+  const contextText = rawContext ? redactSecrets(rawContext) : null;
+  const redactedPrompt = redactSecrets(rawPrompt);
   const promptWithContext = contextText
-    ? `${rawPrompt}\n\n## Additional Context (--context)\n${contextText}\n`
-    : rawPrompt;
+    ? `${redactedPrompt}\n\n## Additional Context (--context)\n${contextText}\n`
+    : redactedPrompt;
   // Delegate mode: read-only sandbox, prepend prompts/delegate.md as system instruction.
   // The user prompt is appended after the template's `## User task\n---` footer.
   const prompt = delegateMode

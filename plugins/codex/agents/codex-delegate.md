@@ -24,6 +24,7 @@ You orchestrate the A+ delegate loop. **Codex is the brain (proposes diffs in `r
 1. Build the prompt:
    - Strip routing flags (`--background`, `--wait`, `--model`, `--effort`, `--no-auto-context`, `--resume`, `--fresh`) from the user request — they go to `codex-companion`, not into the prompt text.
    - Unless `--no-auto-context` is set, prepend an Auto-Context block (cwd, branch, `git status --short`, `git log --oneline -5`, `git diff --name-only HEAD` capped at 10 entries). One short Bash call collects all five.
+   - **Redact before prefixing (SUP-391 W6.D)**: route the Auto-Context block through `plugins/codex/scripts/lib/redact.mjs` `redactSecrets()` (see `agents/codex-rescue.md` for the one-shot pipeline) so commit msg / branch / filename secrets (`sk-*`, `ghp_*`, `AKIA*`, JWT, PEM, `password=`) are replaced with `[REDACTED]` before reaching OpenAI.
 2. Invoke Codex once, foreground:
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" task \

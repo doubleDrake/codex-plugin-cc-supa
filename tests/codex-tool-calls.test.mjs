@@ -139,6 +139,85 @@ test("inspectBashCommand: env CODEX_BASH_ALLOWLIST overrides default", () => {
 });
 
 // ---------------------------------------------------------------------------
+// SUP-391 W6.D — sub-flag deny
+// ---------------------------------------------------------------------------
+
+test("inspectBashCommand: rejects node -e (inline script)", () => {
+  // Test the sub-flag deny path specifically, w/o parens that would trip
+  // the metachar check first.
+  const r = inspectBashCommand("node -e fs.writeFileSync", {});
+  assert.equal(r.allowed, false);
+  assert.match(r.reason, /sub-flag.*node/);
+});
+
+test("inspectBashCommand: rejects node --eval", () => {
+  const r = inspectBashCommand("node --eval foo", {});
+  assert.equal(r.allowed, false);
+  assert.match(r.reason, /sub-flag.*node/);
+});
+
+test("inspectBashCommand: rejects git -c (config injection)", () => {
+  const r = inspectBashCommand("git -c core.editor=/tmp/evil rebase HEAD~1", {});
+  assert.equal(r.allowed, false);
+  assert.match(r.reason, /sub-flag.*git/);
+});
+
+test("inspectBashCommand: rejects git -C (cwd injection)", () => {
+  const r = inspectBashCommand("git -C /tmp/evil status", {});
+  assert.equal(r.allowed, false);
+  assert.match(r.reason, /sub-flag.*git/);
+});
+
+test("inspectBashCommand: rejects git --exec-path", () => {
+  const r = inspectBashCommand("git --exec-path=/tmp status", {});
+  assert.equal(r.allowed, false);
+});
+
+test("inspectBashCommand: rejects npm exec", () => {
+  const r = inspectBashCommand("npm exec arbitrary-pkg", {});
+  assert.equal(r.allowed, false);
+  assert.match(r.reason, /sub-flag.*npm/);
+});
+
+test("inspectBashCommand: rejects find -exec", () => {
+  const r = inspectBashCommand("find . -exec rm -rf {} ;", { CODEX_BASH_ALLOWLIST: "find" });
+  assert.equal(r.allowed, false);
+  // -exec rejected by sub-flag, plus we'd also catch metachar (;)
+  assert.ok(/sub-flag/.test(r.reason) || /metacharacters/.test(r.reason));
+});
+
+test("inspectBashCommand: rejects npx unconditionally", () => {
+  const r = inspectBashCommand("npx anything", { CODEX_BASH_ALLOWLIST: "npx" });
+  assert.equal(r.allowed, false);
+  assert.match(r.reason, /unconditionally rejected/);
+});
+
+test("inspectBashCommand: allows node script.js (no sub-flag)", () => {
+  const r = inspectBashCommand("node ./scripts/foo.js", {});
+  assert.equal(r.allowed, true);
+});
+
+test("inspectBashCommand: allows git status (no sub-flag)", () => {
+  const r = inspectBashCommand("git status --short", {});
+  assert.equal(r.allowed, true);
+});
+
+test("inspectBashCommand: allows git log (no sub-flag)", () => {
+  const r = inspectBashCommand("git log --oneline -5", {});
+  assert.equal(r.allowed, true);
+});
+
+test("inspectBashCommand: allows tsc --noEmit (not in deny list)", () => {
+  const r = inspectBashCommand("tsc --noEmit", {});
+  assert.equal(r.allowed, true);
+});
+
+test("inspectBashCommand: rejects tsc -p /tmp/evil (project flag)", () => {
+  const r = inspectBashCommand("tsc -p /tmp/evil/tsconfig.json", {});
+  assert.equal(r.allowed, false);
+});
+
+// ---------------------------------------------------------------------------
 // dispatchToolCalls — opt-in gating for write/exec tools
 // ---------------------------------------------------------------------------
 

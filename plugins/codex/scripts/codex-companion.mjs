@@ -77,7 +77,7 @@ function printUsage() {
       "  node scripts/codex-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--json]",
       "  node scripts/codex-companion.mjs review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>]",
       "  node scripts/codex-companion.mjs adversarial-review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [focus text]",
-      "  node scripts/codex-companion.mjs task [--background] [--write] [--resume-last|--resume|--fresh] [--model <model|spark>] [--effort <none|minimal|low|medium|high|xhigh>] [prompt]",
+      "  node scripts/codex-companion.mjs task [--background] [--write|--delegate-mode] [--resume-last|--resume|--fresh] [--model <model|spark>] [--effort <none|minimal|low|medium|high|xhigh>] [prompt]",
       "  node scripts/codex-companion.mjs status [job-id] [--all] [--json]",
       "  node scripts/codex-companion.mjs result [job-id] [--json]",
       "  node scripts/codex-companion.mjs cancel [job-id] [--json]"
@@ -479,13 +479,16 @@ async function executeTaskRun(request) {
     throw new Error("Provide a prompt, a prompt file, piped stdin, or use --resume-last.");
   }
 
+  // delegateMode forces read-only sandbox even if write was somehow set elsewhere.
+  // Sandbox precedence: delegateMode (read-only) > write (workspace-write) > default (read-only).
+  const sandbox = request.delegateMode ? "read-only" : request.write ? "workspace-write" : "read-only";
   const result = await runAppServerTurn(workspaceRoot, {
     resumeThreadId,
     prompt: request.prompt,
     defaultPrompt: resumeThreadId ? DEFAULT_CONTINUE_PROMPT : "",
     model: request.model,
     effort: request.effort,
-    sandbox: request.write ? "workspace-write" : "read-only",
+    sandbox,
     onProgress: request.onProgress,
     persistThread: true,
     threadName: resumeThreadId ? null : buildPersistentTaskThreadName(request.prompt || DEFAULT_CONTINUE_PROMPT)
@@ -534,7 +537,7 @@ function buildReviewJobMetadata(reviewName, target) {
   };
 }
 
-function buildTaskRunMetadata({ prompt, resumeLast = false }) {
+function buildTaskRunMetadata({ prompt, resumeLast = false, delegateMode = false }) {
   if (!resumeLast && String(prompt ?? "").includes(STOP_REVIEW_TASK_MARKER)) {
     return {
       title: "Codex Stop Gate Review",
@@ -542,7 +545,9 @@ function buildTaskRunMetadata({ prompt, resumeLast = false }) {
     };
   }
 
-  const title = resumeLast ? "Codex Resume" : "Codex Task";
+  const title = delegateMode
+    ? (resumeLast ? "Codex Delegate (resume)" : "Codex Delegate")
+    : (resumeLast ? "Codex Resume" : "Codex Task");
   const fallbackSummary = resumeLast ? DEFAULT_CONTINUE_PROMPT : "Task";
   return {
     title,
@@ -598,13 +603,14 @@ function buildTaskJob(workspaceRoot, taskMetadata, write) {
   });
 }
 
-function buildTaskRequest({ cwd, model, effort, prompt, write, resumeLast, jobId }) {
+function buildTaskRequest({ cwd, model, effort, prompt, write, delegateMode = false, resumeLast, jobId }) {
   return {
     cwd,
     model,
     effort,
     prompt,
     write,
+    delegateMode,
     resumeLast,
     jobId
   };
@@ -732,7 +738,7 @@ async function handleReview(argv) {
 async function handleTask(argv) {
   const { options, positionals } = parseCommandInput(argv, {
     valueOptions: ["model", "effort", "cwd", "prompt-file"],
-    booleanOptions: ["json", "write", "resume-last", "resume", "fresh", "background"],
+    booleanOptions: ["json", "write", "delegate-mode", "resume-last", "resume", "fresh", "background"],
     aliasMap: {
       m: "model"
     }
@@ -742,7 +748,7 @@ async function handleTask(argv) {
   const workspaceRoot = resolveCommandWorkspace(options);
   const model = normalizeRequestedModel(options.model);
   const effort = normalizeReasoningEffort(options.effort);
-  const prompt = readTaskPrompt(cwd, options, positionals);
+  const rawPrompt = readTaskPrompt(cwd, options, positionals);
 
   const resumeLast = Boolean(options["resume-last"] || options.resume);
   const fresh = Boolean(options.fresh);
@@ -750,9 +756,19 @@ async function handleTask(argv) {
     throw new Error("Choose either --resume/--resume-last or --fresh.");
   }
   const write = Boolean(options.write);
+  const delegateMode = Boolean(options["delegate-mode"]);
+  if (write && delegateMode) {
+    throw new Error("--write and --delegate-mode are mutually exclusive (delegate is read-only by contract).");
+  }
+  // Delegate mode: read-only sandbox, prepend prompts/delegate.md as system instruction.
+  // The user prompt is appended after the template's `## User task\n---` footer.
+  const prompt = delegateMode
+    ? `${loadPromptTemplate(ROOT_DIR, "delegate")}\n\n${rawPrompt}`
+    : rawPrompt;
   const taskMetadata = buildTaskRunMetadata({
-    prompt,
-    resumeLast
+    prompt: rawPrompt,
+    resumeLast,
+    delegateMode
   });
 
   if (options.background) {
@@ -766,6 +782,7 @@ async function handleTask(argv) {
       effort,
       prompt,
       write,
+      delegateMode,
       resumeLast,
       jobId: job.id
     });
@@ -784,6 +801,7 @@ async function handleTask(argv) {
         effort,
         prompt,
         write,
+        delegateMode,
         resumeLast,
         jobId: job.id,
         onProgress: progress

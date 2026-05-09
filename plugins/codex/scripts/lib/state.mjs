@@ -22,7 +22,10 @@ function defaultState() {
     config: {
       stopReviewGate: false
     },
-    jobs: []
+    jobs: [],
+    // Workspace -> threadId mapping for `/codex:consult` follow-ups.
+    // Refs: cc#7 (consult command), SUP-373.
+    consultThreads: {}
   };
 }
 
@@ -70,7 +73,8 @@ export function loadState(cwd) {
         ...defaultState().config,
         ...(parsed.config ?? {})
       },
-      jobs: Array.isArray(parsed.jobs) ? parsed.jobs : []
+      jobs: Array.isArray(parsed.jobs) ? parsed.jobs : [],
+      consultThreads: parsed.consultThreads && typeof parsed.consultThreads === "object" ? parsed.consultThreads : {}
     };
   } catch {
     return defaultState();
@@ -99,7 +103,8 @@ export function saveState(cwd, state) {
       ...defaultState().config,
       ...(state.config ?? {})
     },
-    jobs: nextJobs
+    jobs: nextJobs,
+    consultThreads: state.consultThreads && typeof state.consultThreads === "object" ? state.consultThreads : {}
   };
 
   const retainedIds = new Set(nextJobs.map((job) => job.id));
@@ -113,6 +118,29 @@ export function saveState(cwd, state) {
 
   fs.writeFileSync(resolveStateFile(cwd), `${JSON.stringify(nextState, null, 2)}\n`, "utf8");
   return nextState;
+}
+
+// Consult thread mapping (workspace -> threadId). Used by /codex:consult to
+// resume the same thread on follow-up calls in the same workspace.
+// Refs: cc#7 (SUP-373).
+export function getConsultThread(cwd, key) {
+  const state = loadState(cwd);
+  return state.consultThreads?.[key] ?? null;
+}
+
+export function setConsultThread(cwd, key, threadId) {
+  return updateState(cwd, (state) => {
+    state.consultThreads = state.consultThreads ?? {};
+    state.consultThreads[key] = threadId;
+  });
+}
+
+export function clearConsultThread(cwd, key) {
+  return updateState(cwd, (state) => {
+    if (state.consultThreads && key in state.consultThreads) {
+      delete state.consultThreads[key];
+    }
+  });
 }
 
 export function updateState(cwd, mutate) {

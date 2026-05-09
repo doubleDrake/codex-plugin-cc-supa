@@ -25,10 +25,13 @@ import { collectReviewContext, ensureGitRepository, resolveReviewTarget } from "
 import { binaryAvailable, terminateProcessTree } from "./lib/process.mjs";
 import { loadPromptTemplate, interpolateTemplate } from "./lib/prompts.mjs";
 import {
+  clearConsultThread,
   generateJobId,
   getConfig,
+  getConsultThread,
   listJobs,
   setConfig,
+  setConsultThread,
   upsertJob,
   writeJobFile
 } from "./lib/state.mjs";
@@ -78,6 +81,7 @@ function printUsage() {
       "  node scripts/codex-companion.mjs review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>]",
       "  node scripts/codex-companion.mjs adversarial-review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [focus text]",
       "  node scripts/codex-companion.mjs task [--background] [--write|--delegate-mode] [--resume-last|--resume|--resume-id <threadId>|--fresh] [--model <model|spark>] [--effort <none|minimal|low|medium|high|xhigh>] [prompt]",
+      "  node scripts/codex-companion.mjs consult [--fresh] [--background] [--model <model|spark>] [topic or follow-up]",
       "  node scripts/codex-companion.mjs status [job-id] [--all] [--json]",
       "  node scripts/codex-companion.mjs result [job-id] [--json]",
       "  node scripts/codex-companion.mjs cancel [job-id] [--json]"
@@ -825,6 +829,104 @@ async function handleTask(argv) {
   );
 }
 
+async function executeConsultRun(request) {
+  ensureCodexAvailable(request.cwd);
+
+  const result = await runAppServerTurn(request.cwd, {
+    resumeThreadId: request.resumeThreadId,
+    prompt: request.prompt,
+    model: request.model,
+    sandbox: "read-only",
+    onProgress: request.onProgress,
+    persistThread: true,
+    threadName: request.resumeThreadId
+      ? null
+      : `Codex Consult: ${shorten(request.userPrompt || "Consultation", 56)}`
+  });
+
+  // Persist the (possibly new) threadId for future follow-ups in this workspace.
+  // Refs: cc#7, SUP-373.
+  if (result.threadId) {
+    setConsultThread(request.cwd, request.workspaceKey, result.threadId);
+  }
+
+  const rawOutput = typeof result.finalMessage === "string" ? result.finalMessage : "";
+  const failureMessage = result.error?.message ?? result.stderr ?? "";
+  const rendered = rawOutput || failureMessage || "Consult turn finished with no output.\n";
+  return {
+    exitStatus: result.status,
+    threadId: result.threadId,
+    turnId: result.turnId,
+    payload: {
+      status: result.status,
+      threadId: result.threadId,
+      rawOutput,
+      reasoningSummary: result.reasoningSummary
+    },
+    rendered,
+    summary: firstMeaningfulLine(rawOutput, firstMeaningfulLine(failureMessage, "Consult finished.")),
+    jobTitle: "Codex Consult",
+    jobClass: "consult"
+  };
+}
+
+async function handleConsult(argv) {
+  const { options, positionals } = parseCommandInput(argv, {
+    valueOptions: ["model", "cwd", "prompt-file"],
+    booleanOptions: ["json", "fresh", "background"],
+    aliasMap: {
+      m: "model"
+    }
+  });
+
+  const cwd = resolveCommandCwd(options);
+  const workspaceRoot = resolveCommandWorkspace(options);
+  const model = normalizeRequestedModel(options.model);
+  const userPrompt = readTaskPrompt(cwd, options, positionals);
+
+  if (!userPrompt) {
+    throw new Error("Provide a topic or follow-up question for /codex:consult.");
+  }
+
+  // Workspace-scoped thread mapping. --fresh clears the existing mapping;
+  // otherwise we resume the prior thread for this workspace.
+  if (options.fresh) {
+    clearConsultThread(workspaceRoot, workspaceRoot);
+  }
+  const resumeThreadId = options.fresh ? null : getConsultThread(workspaceRoot, workspaceRoot);
+
+  // Prepend the consult prompt template; user question is appended after the
+  // template's `## User question` footer.
+  const prompt = `${loadPromptTemplate(ROOT_DIR, "consult")}\n\n${userPrompt}`;
+
+  const job = createCompanionJob({
+    prefix: "consult",
+    kind: "consult",
+    title: "Codex Consult",
+    workspaceRoot,
+    jobClass: "consult",
+    summary: shorten(userPrompt)
+  });
+
+  const runner = (progress) =>
+    executeConsultRun({
+      cwd: workspaceRoot,
+      model,
+      prompt,
+      userPrompt,
+      resumeThreadId,
+      workspaceKey: workspaceRoot,
+      onProgress: progress
+    });
+
+  if (options.background) {
+    // Background consult is allowed but uncommon — surface a hint.
+    process.stderr.write("[codex] Consult is interactive; --background is unusual but honored.\n");
+  }
+
+  await runForegroundCommand(job, runner, { json: options.json });
+}
+
 async function handleTaskWorker(argv) {
   const { options } = parseCommandInput(argv, {
     valueOptions: ["cwd", "job-id"]
@@ -1035,6 +1137,9 @@ async function main() {
       break;
     case "task-worker":
       await handleTaskWorker(argv);
+      break;
+    case "consult":
+      await handleConsult(argv);
       break;
     case "status":
       await handleStatus(argv);

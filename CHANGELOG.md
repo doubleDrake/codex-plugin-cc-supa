@@ -18,11 +18,13 @@ Linear Project: [codex-plugin-cc-plus fork](https://linear.app/supalead/project/
 
 Refs SUP-378 (the `--pane` flag itself), SUP-381 (sister skill `codex-team-bridge` — translation layer for codex stdin/stdout side, loaded automatically by codex-delegate runner).
 
-### Added — `/codex` natural-language entry (W6.B SUP-385)
+### Added — `/codex:do` natural-language entry (W6.B SUP-385, hotfix renamed from `/codex:codex`)
 
-User feedback: "현재 `/codex` blah blah 명령어 너무 많은데 사용성 관점에서 단순화하면 좋겠어. 자연어로 처리할수있게하면 더 좋을것같고." Nine specific commands (`/codex:rescue`, `/codex:delegate`, `/codex:consult`, `/codex:review`, `/codex:adversarial-review`, `/codex:status`, `/codex:result`, `/codex:cancel`, `/codex:setup`) were friction for casual use. New `/codex` command is a single natural-language router.
+User feedback: "현재 `/codex` blah blah 명령어 너무 많은데 사용성 관점에서 단순화하면 좋겠어. 자연어로 처리할수있게하면 더 좋을것같고." Nine specific commands (`/codex:rescue`, `/codex:delegate`, `/codex:consult`, `/codex:review`, `/codex:adversarial-review`, `/codex:status`, `/codex:result`, `/codex:cancel`, `/codex:setup`) were friction for casual use. New `/codex:do` command is a single natural-language router.
 
-- New `plugins/codex/commands/codex.md` (~140 lines): four-step protocol (explicit override via `--as <action>` → classification by signal words in KO+EN → ambiguity guard via single AskUserQuestion when action choice would change the result → direct dispatch to the chosen sub-action via `Agent` for delegate/rescue and `Bash`+`codex-companion` for the rest).
+Note on naming: originally landed as `/codex:codex` (file `commands/codex.md`) so that bare `/codex` would feel like a single entry, but Claude Code's plugin namespace forces `/<plugin>:<command>` invocation form, and the `codex/codex` doubled name caused the runtime to fail dispatch with `Args from unknown skill`. Renamed file to `do.md`; invocation is now `/codex:do <request>`. This is a hot-fix during the same release; no separate SUP issue.
+
+- New `plugins/codex/commands/do.md` (~150 lines): four-step protocol (explicit override via `--as <action>` → classification by signal words in KO+EN → ambiguity guard via single AskUserQuestion when action choice would change the result → direct dispatch to the chosen sub-action via `Agent` for delegate/rescue and `Bash`+`codex-companion` for the rest).
 - Classification table covers `delegate` (multi-file refactor / implement / migrate), `rescue` (single-shot small fix), `consult` (design / Q&A / explore), `review` (read-only feedback), `adversarial-review` (challenge the approach), `status` / `result` / `cancel` (job ops), `setup` (install check). Both Korean and English signal words are first-class.
 - Runtime flags (`--background`, `--wait`, `--pane`, `--model`, `--effort`, `--no-auto-context`, `--base`, `--scope`, `--fresh`) flow through unchanged. `--as <action>` is the only routing flag and is stripped before forwarding.
 - INV-1 preserved: all nine direct aliases continue to work exactly as before. `/codex` is an additive entry, not a replacement.

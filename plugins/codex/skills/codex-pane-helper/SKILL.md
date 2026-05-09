@@ -1,6 +1,6 @@
 ---
 name: codex-pane-helper
-description: Spawn a separate tmux pane for a Codex delegate run via Claude Code's Agent Teams primitive. Use when the user invokes /codex --pane or /codex:delegate --pane, or when the orchestrator decides background isolation would benefit from a dedicated pane. Handles the full TeamCreate → Agent spawn → SendMessage routing → cleanup lifecycle so each caller doesn't have to re-derive the procedure.
+description: Spawn a separate tmux pane for a Codex delegate run via Claude Code's Agent Teams primitive. Use when the user invokes /codex:do --pane or /codex:delegate --pane, or when the orchestrator decides background isolation would benefit from a dedicated pane. Handles the full TeamCreate → Agent spawn → SendMessage routing → cleanup lifecycle so each caller doesn't have to re-derive the procedure.
 ---
 
 # codex-pane-helper — `--pane` automation
@@ -16,7 +16,7 @@ Refs:
 
 Load when **any** of these holds:
 
-- The user passed `--pane` to `/codex` or `/codex:delegate`.
+- The user passed `--pane` to `/codex:do` or `/codex:delegate`.
 - An orchestrator agent decided isolation in a separate pane is the right cost/benefit (long-running task, parallel work, user wants real-time visibility without polluting the main thread).
 - A new team-aware agent (not just codex-delegate) wants the same lifecycle.
 

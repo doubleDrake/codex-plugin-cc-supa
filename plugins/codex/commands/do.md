@@ -4,7 +4,9 @@ argument-hint: "[--as <action>] [--pane] [--background|--wait] [--model <model|s
 allowed-tools: Bash(node:*), Agent, AskUserQuestion, Read, Grep, Glob
 ---
 
-A single natural-language entry point for everything Codex can do. Read the user's text, decide which sub-action it is, then dispatch. The user keeps direct access to all nine specific commands (`/codex:rescue`, `/codex:delegate`, …) — `/codex` is for "I just want to ask Codex something, work out the routing for me."
+A single natural-language entry point for everything Codex can do. Read the user's text, decide which sub-action it is, then dispatch. The user keeps direct access to all nine specific commands (`/codex:rescue`, `/codex:delegate`, …) — `/codex:do` is for "I just want to ask Codex something, work out the routing for me."
+
+Note: this command was originally proposed as bare `/codex` but Claude Code's plugin namespace forces `/<plugin>:<command>` form, so file is `do.md` and invocation is `/codex:do <request>`.
 
 Raw user request:
 
@@ -113,31 +115,31 @@ Tell the user once at the top of your reply which action you classified to ("Rou
 ## Examples
 
 ```
-/codex 인증 미들웨어 JWT로 리팩터해줘
+/codex:do 인증 미들웨어 JWT로 리팩터해줘
   → delegate (multi-file refactor)
 
-/codex 이 PR 리뷰해줘
+/codex:do 이 PR 리뷰해줘
   → review (working tree default)
 
-/codex --as adversarial 이 design 어디서 깨질 수 있어?
+/codex:do --as adversarial 이 design 어디서 깨질 수 있어?
   → adversarial-review (explicit)
 
-/codex 좀비 잡 있어?
+/codex:do 좀비 잡 있어?
   → status
 
-/codex 이거 디자인 어떻게 생각해? 두 가지 옵션이 있는데
+/codex:do 이거 디자인 어떻게 생각해? 두 가지 옵션이 있는데
   → consult
 
-/codex --pane 이 큰 마이그레이션 백그라운드로 진행하고 별도 pane으로 보여줘
+/codex:do --pane 이 큰 마이그레이션 백그라운드로 진행하고 별도 pane으로 보여줘
   → delegate (with --pane preserved)
 
-/codex review해줘
+/codex:do review해줘
   → ambiguous: AskUserQuestion (review vs review-then-fix)
 
-/codex byst7yw6l 결과 보여줘
+/codex:do byst7yw6l 결과 보여줘
   → result (preserves job ID)
 
-/codex codex 설치됐는지 확인
+/codex:do codex 설치됐는지 확인
   → setup
 ```
 

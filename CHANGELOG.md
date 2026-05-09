@@ -6,34 +6,49 @@ Linear Project: [codex-plugin-cc-plus fork](https://linear.app/supalead/project/
 
 ## [Unreleased]
 
-### Planned (per Linear sub-issues)
-
-#### Wave 1 — P0 stability (cc#108/#264/#245/#288 direct)
-
-- **SUP-366** [P1.1] Broker idle timeout — `app-server-broker.mjs` self-shutdown after 10 min idle (cc#108)
-- **SUP-367** [P1.2] PID liveness check + `crashed` status auto-transition — `lib/job-control.mjs` (cc#264/#164/#202/#222)
-- **SUP-368** [P1.3] `sendBrokerShutdown` 5 s timeout — `lib/broker-lifecycle.mjs` (cc#245/#288, PR#293 reference)
-
-#### Wave 2 — A+ delegate pattern (Codex=brain, Claude=hand)
-
-- **SUP-369** [P2.1+2.2] `/codex:delegate` command + prompt — `commands/delegate.md` + `prompts/delegate.md`
-- **SUP-370** [P2.3] `codex-delegate` agent — multi-turn orchestrator (`agents/codex-delegate.md`)
-- **SUP-371** [P2.4] `codex-companion.mjs` `delegateMode` option — `read-only` sandbox + `persistThread` enforced
-
-#### Wave 3 — Stateful thread
-
-- **SUP-372** [P3.1] `ephemeral: false` default — `lib/codex.mjs:55-66` (1-line change)
-- **SUP-373** [P3.2] `/codex:consult` command — `commands/consult.md` + `prompts/consult.md` (cc#7)
-- **SUP-374** [P3.3] `--resume-id <threadId>` flag — `codex-companion.mjs` `handleTask` (cc#230)
-
-#### Wave 4 — Auto-Context
-
-- **SUP-375** [P4.1] Auto-Context prefix rule — agent prompt only (no code change)
-- **SUP-376** [P4.2] `--context <text>` flag — `codex-companion.mjs` (PR#293 reference)
-
 ### Future (MVP-out)
 
-- **SUP-377** [P5] Agent Teams integration PoC — see Linear issue
+- **SUP-377** [P5] Agent Teams integration PoC — see Linear issue. Stays in Backlog as a separate research effort after MVP stabilization.
+
+## [1.0.4-supa.1] — 2026-05-09 (MVP complete)
+
+All twelve MVP sub-issues from the Linear Project are now merged to `main`. The fork delivers stability fixes that upstream has been sitting on for 1.5+ months, plus the A+ delegate / consult / stateful-thread workflow on top.
+
+### Wave 1 — P0 stability (commit `2b576cf`)
+
+- **SUP-366** [P1.1] Broker idle timeout — `app-server-broker.mjs` self-shuts down after 10 min idle (env override `CODEX_BROKER_IDLE_MS`). Defense-in-depth alongside SessionEnd hook. (cc#108)
+- **SUP-367** [P1.2] PID liveness check + `crashed` auto-transition — `lib/job-control.mjs` `enrichJob` runs `kill -0 <pid>` on running/queued jobs and surfaces last 3 log lines on death. (cc#264/#164/#202/#222)
+- **SUP-368** [P1.3] `sendBrokerShutdown` 5 s timeout — `lib/broker-lifecycle.mjs` no longer hangs when the broker is unresponsive. (cc#245/#288, mirrors PR#293)
+
+### Wave 2 — A+ delegate pattern (commits `d55c527`, `c1a2354`)
+
+- **SUP-369** [P2.1+2.2] `/codex:delegate` command + prompt — `commands/delegate.md` + `prompts/delegate.md`. Codex stays read-only and proposes diffs; Claude applies them. STATUS marker terminates the loop.
+- **SUP-370** [P2.3] `codex-delegate` agent — `agents/codex-delegate.md`. Multi-turn orchestrator: parse → apply (`Edit`/`Write` or `git apply`) → verify → follow-up → repeat. 5-turn safety cap.
+- **SUP-371** [P2.4] `codex-companion.mjs` `--delegate-mode` option — read-only sandbox enforced; `prompts/delegate.md` prepended automatically. Mutually exclusive with `--write`.
+
+### Wave 3 — Stateful thread (commits `d2726b4`, `258df9d`)
+
+- **SUP-372** [P3.1] `ephemeral: false` default — `lib/codex.mjs` `buildThreadParams`. Threads now persist to Codex storage by default; pass `ephemeral: true` to opt back into upstream behavior. (cc#7, cc#230)
+- **SUP-373** [P3.2] `/codex:consult` command — `commands/consult.md` + `prompts/consult.md` + `state.mjs` `consultThreads` map + `codex-companion.mjs` `consult` subcommand. Workspace-scoped thread; `--fresh` to reset. (cc#7 — stale 1.5 months at upstream)
+- **SUP-374** [P3.3] `--resume-id <threadId>` flag — `codex-companion.mjs` `handleTask`. Mutually exclusive with `--resume-last` and `--fresh`. (cc#230)
+
+### Wave 4 — Auto-Context (commit `9666c49`)
+
+- **SUP-375** [P4.1] Auto-Context prefix rule — `agents/codex-rescue.md` (matches the rule already in `agents/codex-delegate.md` from SUP-370). Caller injects cwd / branch / git status / recent commits / modified files into the prompt. `--no-auto-context` opts out. Zero runtime code change.
+- **SUP-376** [P4.2] `--context <text>` flag — `codex-companion.mjs` `handleTask`. Composes naturally with Auto-Context (Codex sees both, with a clear separator). (cc#284, mirrors PR#293)
+
+### Out of scope for MVP
+
+Per Linear Project Out-of-scope section, deliberately not implemented:
+
+- Worktree isolation (cc#135) — Claude=parent / Codex=child, same-cwd race rare in single-user fork
+- Auto-decide `wait`/`background` (cc#221) — minor QoL
+- Natural-language router (`~/.claude/CLAUDE.md` import block) — would conflict with supalead's domain skills
+- Codex Desktop history feed isolation (cc#282) — maintainer doesn't use Desktop
+
+### Upstream contribution candidates
+
+W1 (SUP-366/367/368) is contained, well-tested, and addresses confirmed upstream bugs. Eligible for upstream PR submission once OAuth scope friction is resolved on the maintainer's local PAT.
 
 ## [1.0.4-supa.0] — 2026-05-09
 

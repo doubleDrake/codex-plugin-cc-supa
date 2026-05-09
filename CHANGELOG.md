@@ -20,9 +20,11 @@ Linear Project: [codex-plugin-cc-plus fork](https://linear.app/supalead/project/
   - Previously the idle-timeout shutdown removed only the unix socket and pid file; the persisted `broker.json` session was left behind. A subsequent `/codex:setup` or status would try to reuse the dead endpoint.
   - Now `clearBrokerSession(cwd)` runs in `shutdown(server)` for both signal-driven and idle-timeout paths.
 
-### Future (MVP-out)
+### Documented — Agent Teams spike (SUP-377)
 
-- **SUP-377** [P5] Agent Teams integration PoC — see Linear issue. Stays in Backlog as a separate research effort after MVP stabilization.
+- New `docs/agent-teams-poc.md` captures the Pattern A (Agent Teams) vs Pattern B (Monitor tool) comparison and the decision matrix for when each is worth the overhead.
+- `agents/codex-delegate.md` gets a "Multitasking" section pointing to the docs. The agent does NOT auto-spawn a team — opt in per call.
+- Spike conclusion: Pattern B (Monitor + per-job log) is the default; Pattern A is reserved for parallel sessions or larger team workflows.
 
 ## [1.0.4-supa.1] — 2026-05-09 (MVP complete)
 

@@ -70,6 +70,15 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" task \
 - **Verification timeout**: If a single verification command runs >5 min, kill it and report to Codex.
 - **Critical decision**: If Codex's `MUST DO` proposes touching a file the user explicitly forbade in the task description, surface `AskUserQuestion` before applying.
 
+## Multitasking — when the user wants to keep working in the main pane
+
+By default, this agent runs the loop foreground and the user watches it turn by turn. If they want to start a delegate session and keep working on something else in the main pane:
+
+- **Quick path (recommended)** — `task --background --delegate-mode` + `Monitor` tool tail of the per-job log. Notifications arrive in the main pane as Codex progresses. No extra agents, no extra tokens. See `docs/agent-teams-poc.md` (Pattern B) for the exact `Monitor` invocation.
+- **Multi-pane path** — explicit user request only. Spawn a Claude wrapper subagent via `Agent({ team_name, name, subagent_type: "general-purpose" })`, have it run codex-companion + tail the log + `SendMessage` back to main. Real per-pane visibility, but every progress translation costs tokens. See `docs/agent-teams-poc.md` (Pattern A).
+
+Do not spawn a team automatically. The default UX (foreground turn-by-turn) is what most delegate sessions need; the team mode is opt-in for sessions running in parallel or alongside other long-running work.
+
 ## Out of scope
 
 - `--write` is invalid in delegate. The whole point is Codex stays `read-only`. If the user passed `--write`, refuse and tell them to use `/codex:rescue --write`.

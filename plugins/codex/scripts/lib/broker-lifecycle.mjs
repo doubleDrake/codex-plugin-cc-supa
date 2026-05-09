@@ -40,8 +40,19 @@ export async function waitForBrokerEndpoint(endpoint, timeoutMs = 2000) {
   return false;
 }
 
-export async function sendBrokerShutdown(endpoint) {
+// 5 s safety timeout — prevents SessionEnd hook from hanging when the broker is
+// unresponsive (e.g. SIGSTOP'd or stuck). Pattern matches `waitForBrokerEndpoint`.
+// Refs: cc#245, cc#288, cc PR#293.
+const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5000;
+
+export async function sendBrokerShutdown(endpoint, timeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS) {
   await new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(), timeoutMs);
+    timer.unref?.();
+    const finish = () => {
+      clearTimeout(timer);
+      resolve();
+    };
     const socket = connectToEndpoint(endpoint);
     socket.setEncoding("utf8");
     socket.on("connect", () => {
@@ -49,10 +60,10 @@ export async function sendBrokerShutdown(endpoint) {
     });
     socket.on("data", () => {
       socket.end();
-      resolve();
+      finish();
     });
-    socket.on("error", resolve);
-    socket.on("close", resolve);
+    socket.on("error", finish);
+    socket.on("close", finish);
   });
 }
 

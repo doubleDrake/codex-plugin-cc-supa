@@ -8,6 +8,36 @@ import { resolveWorkspaceRoot } from "./workspace.mjs";
 export const DEFAULT_MAX_STATUS_JOBS = 8;
 export const DEFAULT_MAX_PROGRESS_LINES = 4;
 
+// PID liveness check — `kill -0 <pid>` semantics (signal 0 just probes).
+// Refs: cc#264 (status stuck after task_complete), cc#164/#202/#222 (zombie running jobs).
+// Pattern adapted from sanghyun-io/codex-app-server-plugin `bin/codex-review.mjs:1003-1020`.
+function checkProcessAlive(pid) {
+  if (pid == null) return false;
+  const num = Number(pid);
+  if (!Number.isFinite(num) || num <= 0) return false;
+  try {
+    process.kill(num, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function tailLogLines(logFile, count = 3) {
+  if (!logFile || !fs.existsSync(logFile)) return "";
+  try {
+    return fs
+      .readFileSync(logFile, "utf8")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(-count)
+      .join(" | ");
+  } catch {
+    return "";
+  }
+}
+
 export function sortJobsNewestFirst(jobs) {
   return [...jobs].sort((left, right) => String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? "")));
 }
@@ -173,6 +203,24 @@ export function enrichJob(job, options = {}) {
         ? formatElapsedDuration(job.startedAt ?? job.createdAt, job.completedAt ?? job.updatedAt)
         : null
   };
+
+  // Detect zombie jobs — status says running/queued but the worker PID is gone.
+  // Auto-transitions to `crashed` and surfaces last log lines so callers don't
+  // wait forever on a dead worker. (Refs: cc#264/#164/#202/#222)
+  if (
+    (enriched.status === "running" || enriched.status === "queued") &&
+    enriched.pid &&
+    !checkProcessAlive(enriched.pid)
+  ) {
+    let errorMessage = `Worker process exited unexpectedly (PID ${enriched.pid} no longer alive).`;
+    const tail = tailLogLines(enriched.logFile, 3);
+    if (tail) {
+      errorMessage += ` Last log: ${tail}`;
+    }
+    enriched.status = "crashed";
+    enriched.phase = "crashed";
+    enriched.errorMessage = enriched.errorMessage ?? errorMessage;
+  }
 
   return {
     ...enriched,

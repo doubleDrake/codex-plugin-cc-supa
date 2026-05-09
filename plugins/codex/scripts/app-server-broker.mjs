@@ -11,6 +11,15 @@ import { parseBrokerEndpoint } from "./lib/broker-endpoint.mjs";
 
 const STREAMING_METHODS = new Set(["turn/start", "review/start", "thread/compact/start"]);
 
+// Idle auto-shutdown — defense-in-depth against orphan brokers when SessionEnd hook fails.
+// Refs: cc#108, cc#163, cc#193. Pattern adapted from sanghyun-io/codex-app-server-plugin
+// `bin/broker.mjs:65, 491-499`.
+const DEFAULT_BROKER_IDLE_MS = 10 * 60 * 1000;
+const BROKER_IDLE_MS = (() => {
+  const raw = Number.parseInt(process.env.CODEX_BROKER_IDLE_MS ?? "", 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_BROKER_IDLE_MS;
+})();
+
 function buildStreamThreadIds(method, params, result) {
   const threadIds = new Set();
   if (params?.threadId) {
@@ -71,6 +80,24 @@ async function main() {
   let activeStreamThreadIds = null;
   const sockets = new Set();
 
+  // Idle shutdown timer — fires when no client sockets are active for BROKER_IDLE_MS.
+  // Cancelled while any socket is connected. (Refs: cc#108)
+  let idleTimer = null;
+  function resetIdleTimer() {
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
+    }
+    if (sockets.size === 0) {
+      idleTimer = setTimeout(async () => {
+        process.stderr.write(`[broker] Idle timeout (${BROKER_IDLE_MS}ms) — shutting down\n`);
+        await shutdown(server).catch(() => {});
+        process.exit(0);
+      }, BROKER_IDLE_MS);
+      idleTimer.unref?.();
+    }
+  }
+
   function clearSocketOwnership(socket) {
     if (activeRequestSocket === socket) {
       activeRequestSocket = null;
@@ -117,6 +144,7 @@ async function main() {
 
   const server = net.createServer((socket) => {
     sockets.add(socket);
+    resetIdleTimer();
     socket.setEncoding("utf8");
     let buffer = "";
 
@@ -225,11 +253,13 @@ async function main() {
     socket.on("close", () => {
       sockets.delete(socket);
       clearSocketOwnership(socket);
+      resetIdleTimer();
     });
 
     socket.on("error", () => {
       sockets.delete(socket);
       clearSocketOwnership(socket);
+      resetIdleTimer();
     });
   });
 
@@ -244,6 +274,7 @@ async function main() {
   });
 
   server.listen(listenTarget.path);
+  resetIdleTimer();
 }
 
 main().catch((error) => {

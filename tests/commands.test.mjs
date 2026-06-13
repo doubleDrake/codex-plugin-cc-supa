@@ -78,6 +78,7 @@ test("continue is not exposed as a user-facing command", () => {
     "consult.md",
     "delegate.md",
     "do.md",
+    "doctor.md",
     "rescue.md",
     "result.md",
     "review.md",

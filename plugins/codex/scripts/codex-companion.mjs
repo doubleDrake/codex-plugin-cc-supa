@@ -63,11 +63,13 @@ import {
   renderReviewResult,
   renderStoredJobResult,
   renderCancelReport,
+  renderDoctorReport,
   renderJobStatusReport,
   renderSetupReport,
   renderStatusReport,
   renderTaskResult
 } from "./lib/render.mjs";
+import { buildDoctorReport, planCleanup, executeCleanup } from "./lib/doctor.mjs";
 
 const ROOT_DIR = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const REVIEW_SCHEMA = path.join(ROOT_DIR, "schemas", "review-output.schema.json");
@@ -88,7 +90,8 @@ function printUsage() {
       "  node scripts/codex-companion.mjs consult [--fresh] [--background] [--model <model|spark>] [topic or follow-up]",
       "  node scripts/codex-companion.mjs status [job-id] [--all] [--json]",
       "  node scripts/codex-companion.mjs result [job-id] [--json]",
-      "  node scripts/codex-companion.mjs cancel [job-id] [--json]"
+      "  node scripts/codex-companion.mjs cancel [job-id] [--json]",
+      "  node scripts/codex-companion.mjs doctor [--fix] [--clean] [--json]"
     ].join("\n")
   );
 }
@@ -1068,6 +1071,30 @@ async function handleStatus(argv) {
   outputResult(renderStatusPayload(report, options.json), options.json);
 }
 
+async function handleDoctor(argv) {
+  const { options } = parseCommandInput(argv, {
+    valueOptions: ["cwd"],
+    booleanOptions: ["json", "fix", "clean"]
+  });
+
+  // The state dir is keyed by workspace root (resolveStateDir resolves through
+  // resolveWorkspaceRoot), so doctor must diagnose the workspace, not the raw
+  // cwd, to match where jobs/telemetry/broker.json actually live.
+  const workspaceRoot = resolveCommandWorkspace(options);
+  const fix = Boolean(options.fix);
+  const clean = Boolean(options.clean);
+
+  const report = await buildDoctorReport(workspaceRoot, { env: process.env });
+
+  if (fix || clean) {
+    const plan = planCleanup(report, { fix, clean });
+    report.plannedActions = { safe: plan.safe, gated: plan.gated };
+    report.actionsTaken = executeCleanup(plan, report);
+  }
+
+  outputResult(options.json ? report : renderDoctorReport(report), options.json);
+}
+
 function handleResult(argv) {
   const { options, positionals } = parseCommandInput(argv, {
     valueOptions: ["cwd"],
@@ -1221,6 +1248,9 @@ async function main() {
       break;
     case "cancel":
       await handleCancel(argv);
+      break;
+    case "doctor":
+      await handleDoctor(argv);
       break;
     default:
       throw new Error(`Unknown subcommand: ${subcommand}`);

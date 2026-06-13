@@ -58,6 +58,7 @@ import {
 import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
 import { processCodexResponse } from "./lib/codex-tool-calls.mjs";
 import { readTelemetry, aggregateTelemetry } from "./lib/telemetry.mjs";
+import { readBrokerEvents } from "./lib/broker-telemetry.mjs";
 import {
   renderNativeReviewResult,
   renderReviewResult,
@@ -1063,7 +1064,14 @@ async function handleStatus(argv) {
   try {
     const telemetryRecords = readTelemetry({ cwd });
     if (telemetryRecords.length > 0) {
-      report.stats = aggregateTelemetry(telemetryRecords, { env: process.env });
+      // Pass broker events so the restart rate uses the REAL "broker" source
+      // (recovery-succeeded/failed from broker-telemetry.jsonl) when that file
+      // exists; otherwise aggregateTelemetry falls back to the interrupted-turn
+      // inference. readBrokerEvents is best-effort and returns [] when absent.
+      report.stats = aggregateTelemetry(telemetryRecords, {
+        env: process.env,
+        brokerEvents: readBrokerEvents(cwd)
+      });
     }
   } catch {
     // Telemetry is best-effort; never let it break /codex:status.

@@ -582,7 +582,10 @@ async function executeTaskRun(request) {
 function buildReviewJobMetadata(reviewName, target) {
   return {
     kind: reviewName === "Adversarial Review" ? "adversarial-review" : "review",
-    title: reviewName === "Review" ? "Codex Review" : `Codex ${reviewName}`,
+    // Job title is surfaced verbatim in the Claude Code harness desktop
+    // notification, which already prefixes "Codex". Keep it un-prefixed here so
+    // the notification reads "Codex Review" rather than "Codex Codex Review".
+    title: reviewName,
     summary: `${reviewName} ${target.label}`
   };
 }
@@ -590,14 +593,14 @@ function buildReviewJobMetadata(reviewName, target) {
 function buildTaskRunMetadata({ prompt, resumeLast = false, delegateMode = false }) {
   if (!resumeLast && String(prompt ?? "").includes(STOP_REVIEW_TASK_MARKER)) {
     return {
-      title: "Codex Stop Gate Review",
+      title: "Stop Gate Review",
       summary: "Stop-gate review of previous Claude turn"
     };
   }
 
   const title = delegateMode
-    ? (resumeLast ? "Codex Delegate (resume)" : "Codex Delegate")
-    : (resumeLast ? "Codex Resume" : "Codex Task");
+    ? (resumeLast ? "Delegate (resume)" : "Delegate")
+    : (resumeLast ? "Resume" : "Task");
   const fallbackSummary = resumeLast ? DEFAULT_CONTINUE_PROMPT : "Task";
   return {
     title,
@@ -959,7 +962,7 @@ async function handleConsult(argv) {
   const job = createCompanionJob({
     prefix: "consult",
     kind: "consult",
-    title: "Codex Consult",
+    title: "Consult",
     workspaceRoot,
     jobClass: "consult",
     summary: shorten(userPrompt)

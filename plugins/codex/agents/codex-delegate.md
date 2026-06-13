@@ -94,7 +94,7 @@ If the user says "run this and keep me posted while I work on X" but does NOT pa
 3. Start `Monitor` with the canonical filter (full pack in `docs/monitor-filters.md`):
    ```
    Monitor(
-     description: "Codex delegate <jobId>",
+     description: "delegate <jobId>",
      command: "tail -F <logFile> | grep --line-buffered -E '\\[codex\\] (Turn|Running command|Reviewer|Applying|File changes|error|Codex error|Turn completed|Turn failed)'",
      timeout_ms: 1800000,
      persistent: false

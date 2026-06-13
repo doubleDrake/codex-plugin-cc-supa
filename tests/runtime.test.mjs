@@ -922,7 +922,7 @@ test("review accepts --background while still running as a tracked review job", 
 
   assert.equal(status.status, 0, status.stderr);
   assert.match(status.stdout, /# Codex Status/);
-  assert.match(status.stdout, /Codex Review/);
+  assert.match(status.stdout, /\bReview\b/);
   assert.match(status.stdout, /completed/);
 });
 
@@ -1840,7 +1840,7 @@ test("stop hook runs a stop-time review task and blocks on findings when the rev
     }
   });
   assert.equal(status.status, 0, status.stderr);
-  assert.match(status.stdout, /Codex Stop Gate Review/);
+  assert.match(status.stdout, /Stop Gate Review/);
 });
 
 test("stop hook logs running tasks to stderr without blocking when the review gate is disabled", () => {

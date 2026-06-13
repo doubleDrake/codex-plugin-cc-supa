@@ -58,7 +58,7 @@ Background flow:
 ```typescript
 Bash({
   command: `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" adversarial-review "$ARGUMENTS"`,
-  description: "Codex adversarial review",
+  description: "adversarial review",
   run_in_background: true
 })
 ```

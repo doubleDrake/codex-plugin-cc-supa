@@ -419,7 +419,7 @@ export function renderStoredJobResult(job, storedJob) {
   }
 
   const lines = [
-    `# ${job.title ?? "Codex Result"}`,
+    `# Codex ${job.title ?? "Result"}`,
     "",
     `Job: ${job.id}`,
     `Status: ${job.status}`

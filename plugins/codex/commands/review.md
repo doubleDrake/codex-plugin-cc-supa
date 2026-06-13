@@ -53,7 +53,7 @@ Background flow:
 ```typescript
 Bash({
   command: `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" review "$ARGUMENTS"`,
-  description: "Codex review",
+  description: "review",
   run_in_background: true
 })
 ```

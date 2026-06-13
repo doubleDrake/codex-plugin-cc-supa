@@ -366,6 +366,21 @@ export function renderStatusReport(report) {
     lines.push("No jobs recorded yet.", "");
   }
 
+  if (report.stats && report.stats.total > 0) {
+    const stats = report.stats;
+    lines.push("Turn stats (this workspace):");
+    lines.push(
+      `- turns ${stats.total} | p50 ${stats.durationP50}ms | p95 ${stats.durationP95}ms | max ${stats.durationMax}ms`
+    );
+    lines.push(
+      `- stall rate ${(stats.stallRate * 100).toFixed(1)}% | restart rate ${(stats.restartRate * 100).toFixed(1)}% (source: ${stats.restartRateSource})`
+    );
+    if (stats.recommendation) {
+      lines.push(`- ${stats.recommendation}`);
+    }
+    lines.push("");
+  }
+
   if (report.needsReview) {
     lines.push("The stop-time review gate is enabled.");
     lines.push("Ending the session will trigger a fresh Codex adversarial review and block if it finds issues.");

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import process from "node:process";
 
 import { readJobFile, resolveJobFile, resolveJobLogFile, resolveJobSignalFile, upsertJob, writeJobFile } from "./state.mjs";
+import { recordTurnOutcome } from "./telemetry.mjs";
 
 export const SESSION_ID_ENV = "CODEX_COMPANION_SESSION_ID";
 
@@ -61,6 +62,13 @@ export function createJobLogFile(workspaceRoot, jobId, title) {
 // or `until [ -f <jobsDir>/<jobId>.done ]`) wakes the instant a tracked job
 // reaches a terminal state. Best-effort: never fail a job over the signal file.
 // Pattern adapted from dragon84867/codex-plugin-cc.
+// Epoch-ms duration between two ISO timestamps; null if either is unparseable.
+function turnDurationMs(startedAtIso, endedAtIso) {
+  const started = Date.parse(startedAtIso);
+  const ended = Date.parse(endedAtIso);
+  return Number.isFinite(started) && Number.isFinite(ended) ? ended - started : null;
+}
+
 export function writeCompletionSignalFile(workspaceRoot, jobId, status, summary) {
   const safeStatus =
     status === "completed" ? "completed" : status === "crashed" ? "crashed" : "failed";
@@ -195,6 +203,16 @@ export async function runTrackedJob(job, runner, options = {}) {
     });
     appendLogBlock(options.logFile ?? job.logFile ?? null, "Final output", execution.rendered);
     writeCompletionSignalFile(job.workspaceRoot, job.id, completionStatus, execution.summary);
+    recordTurnOutcome(
+      {
+        kind: job.kind ?? job.jobClass ?? null,
+        exitReason: completionStatus,
+        durationMs: turnDurationMs(runningRecord.startedAt, completedAt),
+        startedAt: Date.parse(runningRecord.startedAt) || null,
+        threadId: execution.threadId ?? null
+      },
+      { cwd: job.workspaceRoot }
+    );
     return execution;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -218,6 +236,16 @@ export async function runTrackedJob(job, runner, options = {}) {
       completedAt
     });
     writeCompletionSignalFile(job.workspaceRoot, job.id, "failed", errorMessage);
+    recordTurnOutcome(
+      {
+        kind: job.kind ?? job.jobClass ?? null,
+        exitReason: "failed",
+        durationMs: turnDurationMs(runningRecord.startedAt, completedAt),
+        startedAt: Date.parse(runningRecord.startedAt) || null,
+        threadId: null
+      },
+      { cwd: job.workspaceRoot }
+    );
     throw error;
   }
 }

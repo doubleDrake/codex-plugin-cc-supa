@@ -57,6 +57,7 @@ import {
 } from "./lib/tracked-jobs.mjs";
 import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
 import { processCodexResponse } from "./lib/codex-tool-calls.mjs";
+import { readTelemetry, aggregateTelemetry } from "./lib/telemetry.mjs";
 import {
   renderNativeReviewResult,
   renderReviewResult,
@@ -1056,6 +1057,14 @@ async function handleStatus(argv) {
   }
 
   const report = buildStatusSnapshot(cwd, { all: options.all });
+  try {
+    const telemetryRecords = readTelemetry({ cwd });
+    if (telemetryRecords.length > 0) {
+      report.stats = aggregateTelemetry(telemetryRecords, { env: process.env });
+    }
+  } catch {
+    // Telemetry is best-effort; never let it break /codex:status.
+  }
   outputResult(renderStatusPayload(report, options.json), options.json);
 }
 

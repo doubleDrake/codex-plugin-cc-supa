@@ -1,7 +1,45 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { renderReviewResult, renderStoredJobResult } from "../plugins/codex/scripts/lib/render.mjs";
+import { renderReviewResult, renderStoredJobResult, renderStatusReport } from "../plugins/codex/scripts/lib/render.mjs";
+
+function baseStatusReport(overrides = {}) {
+  return {
+    sessionRuntime: { label: "ready" },
+    config: { stopReviewGate: false },
+    running: [],
+    latestFinished: null,
+    recent: [],
+    needsReview: false,
+    ...overrides
+  };
+}
+
+test("renderStatusReport surfaces per-turn telemetry stats when present", () => {
+  const output = renderStatusReport(
+    baseStatusReport({
+      stats: {
+        total: 3,
+        durationP50: 2000,
+        durationP95: 3000,
+        durationMax: 3000,
+        stallRate: 0,
+        restartRate: 0,
+        restartRateSource: "interrupted",
+        recommendation: "Timeouts look well-matched to observed turn durations; no change recommended."
+      }
+    })
+  );
+  assert.match(output, /Turn stats/);
+  assert.match(output, /turns 3 \| p50 2000ms \| p95 3000ms \| max 3000ms/);
+  assert.match(output, /stall rate 0\.0% \| restart rate 0\.0% \(source: interrupted\)/);
+  assert.match(output, /well-matched/);
+});
+
+test("renderStatusReport omits the stats section when there is no telemetry", () => {
+  const output = renderStatusReport(baseStatusReport());
+  assert.doesNotMatch(output, /Turn stats/);
+});
 
 test("renderReviewResult degrades gracefully when JSON is missing required review fields", () => {
   const output = renderReviewResult(

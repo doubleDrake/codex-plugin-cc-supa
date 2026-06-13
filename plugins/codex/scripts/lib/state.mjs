@@ -226,3 +226,10 @@ export function resolveJobSignalFile(cwd, jobId) {
   ensureStateDir(cwd);
   return path.join(resolveJobsDir(cwd), `${jobId}.done`);
 }
+
+// Per-turn telemetry log — one JSON line per finished turn at
+// `<stateDir>/telemetry.jsonl`. Pattern adapted from Robbyfuu/codex-plugin-cc.
+export function resolveTelemetryFile(cwd) {
+  ensureStateDir(cwd);
+  return path.join(resolveStateDir(cwd), "telemetry.jsonl");
+}

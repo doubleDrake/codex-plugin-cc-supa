@@ -12,6 +12,7 @@ import {
   resolveJobFile,
   resolveJobLogFile
 } from "../plugins/codex/scripts/lib/state.mjs";
+import { readTelemetry } from "../plugins/codex/scripts/lib/telemetry.mjs";
 
 // node --test runs each test file in its own process, so setting
 // CLAUDE_PLUGIN_DATA here does not leak into other suites.
@@ -69,4 +70,30 @@ test("runTrackedJob writes a failed signal when the runner throws", async () => 
     })
   );
   assert.match(fs.readFileSync(resolveJobSignalFile(ws, "run-throw"), "utf8"), /failed run-throw boom/);
+});
+
+test("runTrackedJob appends a readable telemetry line on completion", async () => {
+  const ws = freshWorkspace();
+  await runTrackedJob(
+    { workspaceRoot: ws, id: "tel-ok", kind: "task", logFile: null },
+    async () => ({ exitStatus: 0, summary: "done", payload: {}, rendered: "x", threadId: "th-1", turnId: null })
+  );
+  const records = readTelemetry({ cwd: ws });
+  assert.equal(records.length, 1);
+  assert.equal(records[0].exitReason, "completed");
+  assert.equal(records[0].kind, "task");
+  assert.equal(records[0].threadId, "th-1");
+});
+
+test("runTrackedJob records a failed telemetry outcome when the runner throws", async () => {
+  const ws = freshWorkspace();
+  await assert.rejects(
+    runTrackedJob({ workspaceRoot: ws, id: "tel-bad", kind: "review", logFile: null }, async () => {
+      throw new Error("boom");
+    })
+  );
+  const records = readTelemetry({ cwd: ws });
+  assert.equal(records.length, 1);
+  assert.equal(records[0].exitReason, "failed");
+  assert.equal(records[0].kind, "review");
 });

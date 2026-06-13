@@ -5,6 +5,10 @@ description: Spawn a separate tmux pane for a Codex delegate run via Claude Code
 
 # codex-pane-helper — `--pane` automation
 
+> **Deprecated (Workflow-native delegate supersedes this).**
+> Workflow's `isolation: "worktree"` plus the `agent({ agentType: "codex:codex-delegate", ... })` lifecycle in `workflows/codex-delegate.js` replace **steps 2–5** below (spawn runner → initial dispatch → message monitoring → cleanup): the harness auto-creates and auto-cleans a per-agent git worktree and notifies on completion, so there is no TeamCreate/Agent/SendMessage/TeamDelete lifecycle to hand-roll for orchestration.
+> Only **step 1 (reuse-vs-create team detection)** stays relevant, and only for the **`--pane` interactive case** — a live teammate the user can SendMessage mid-run, which a Workflow can't do. This skill **will be removed in a future release**. Do not delete it yet. The body below is unchanged for the `--pane` case.
+
 This skill packages the five-step Pattern A flow (originally inlined in `agents/codex-delegate.md` per W5 SUP-378) so any team-aware agent can drop into a separate-pane Codex run without re-deriving the procedure. The skill IS the procedure; the caller just needs to follow the steps in order.
 
 Refs:

@@ -5,6 +5,10 @@ description: Translate layer between Codex (which knows nothing about Agent Team
 
 # codex-team-bridge — translation layer
 
+> **Deprecated (Workflow-native delegate supersedes this).**
+> The Codex STATUS ping-pong this skill describes is now better expressed as a Workflow `while` loop in `workflows/codex-delegate.js` (`while (status !== "DONE" && turn <= 5) { const r = await agent({ agentType: "codex:codex-delegate", isolation: "worktree", ... }) }`). The Workflow handles parallel delegation, worktree isolation, and completion notification natively, so for orchestration this hand-rolled SendMessage ↔ STATUS translation is redundant.
+> This skill stays for the **`--pane` interactive case** — a live teammate the user can SendMessage mid-run, which a Workflow can't do — and **will be removed in a future release**. Do not delete it yet. The body below is unchanged for that case.
+
 Codex (OpenAI) does not see Claude Code's team primitives. It does not know about `SendMessage`, `team_name`, `Agent` tool, inboxes, idle wakeup, or `TeamDelete`. It only knows the rules in `prompts/delegate.md` and its own thread (`--resume-last` for follow-ups).
 
 You — the wrapping Claude agent — are the **bridge**. Your job is to translate between two protocols:

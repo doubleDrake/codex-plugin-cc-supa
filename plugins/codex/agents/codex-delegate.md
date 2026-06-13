@@ -83,6 +83,8 @@ CLAUDE_AGENT_NAME="<self>" \
 
 ## Multitasking — Pattern A (`--pane`) and Pattern B (`Monitor`)
 
+> **Workflow-native path for parallel / isolated delegation.** When the user wants several delegations at once, or each isolated in its own git worktree, the command layer can run the Workflow tool with `workflows/codex-delegate.js` instead of spawning this agent directly — it drives the same STATUS loop as a deterministic `while` loop (`agent({ agentType: "codex:codex-delegate", isolation: "worktree", ... })`), fans tasks out with `pipeline()`/`parallel()`, and notifies on completion. That path supersedes the `codex-team-bridge` / `codex-pane-helper` skills for orchestration. `--pane` (below) stays for the interactive live-teammate case a Workflow can't do. See `commands/delegate.md` → "Execution models".
+
 Two opt-in modes when the user wants to keep working while codex runs.
 
 ### Pattern B — Monitor tool (no flag, recommended default for "I want updates while I work")

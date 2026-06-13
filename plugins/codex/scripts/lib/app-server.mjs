@@ -21,6 +21,12 @@ const PLUGIN_MANIFEST = JSON.parse(fs.readFileSync(PLUGIN_MANIFEST_URL, "utf8"))
 
 export const BROKER_ENDPOINT_ENV = "CODEX_COMPANION_APP_SERVER_ENDPOINT";
 export const BROKER_BUSY_RPC_CODE = -32001;
+// The broker returns BROKER_BUSY when an exclusive stream is already active, i.e.
+// it refused the request before it reached the child app-server — so the request
+// never executed and is safe to retry with backoff. Bounded so a wedged broker
+// cannot spin. Pattern adapted from Robbyfuu/codex-plugin-cc.
+export const BROKER_BUSY_MAX_RETRIES = 2;
+const BROKER_BUSY_BACKOFF_MS = 150;
 
 /** @type {ClientInfo} */
 const DEFAULT_CLIENT_INFO = {
@@ -53,7 +59,14 @@ function createProtocolError(message, data) {
   return error;
 }
 
-class AppServerClientBase {
+function delay(ms) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer?.unref?.();
+  });
+}
+
+export class AppServerClientBase {
   constructor(cwd, options = {}) {
     this.cwd = cwd;
     this.options = options;
@@ -82,7 +95,27 @@ class AppServerClientBase {
    * @param {import("./app-server-protocol").AppServerRequestParams<M>} params
    * @returns {Promise<import("./app-server-protocol").AppServerResponse<M>>}
    */
-  request(method, params) {
+  async request(method, params) {
+    let attempt = 0;
+    for (;;) {
+      try {
+        return await this.dispatchRequest(method, params);
+      } catch (error) {
+        // Only BROKER_BUSY is retried: it means the broker refused before the
+        // request reached the child (it never executed), so a retry is safe.
+        // Socket/exit errors carry no rpcCode and are NOT retried — a mid-turn
+        // drop could double-submit a non-idempotent turn.
+        if (error?.rpcCode === BROKER_BUSY_RPC_CODE && attempt < BROKER_BUSY_MAX_RETRIES) {
+          attempt += 1;
+          await delay(BROKER_BUSY_BACKOFF_MS * attempt);
+          continue;
+        }
+        throw error;
+      }
+    }
+  }
+
+  dispatchRequest(method, params) {
     if (this.closed) {
       throw new Error("codex app-server client is closed.");
     }

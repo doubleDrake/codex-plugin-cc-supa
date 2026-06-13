@@ -6,6 +6,81 @@ Linear Project: [codex-plugin-cc-plus fork](https://linear.app/supalead/project/
 
 ## [Unreleased]
 
+### W7 — reliability ports, notification fix, Workflow-native delegate
+
+Ported the strongest reliability/observability features from the two best
+sibling forks (`Robbyfuu/codex-plugin-cc`, `dragon84867/codex-plugin-cc`, both
+Apache-2.0), fixed a notification bug that also exists upstream, and reframed
+Pattern A around the Claude Code Workflow tool. Suite 169 → 269.
+
+**Fixed — notification "Codex Codex" duplication (upstream bug).** macOS
+notifications read `Codex Codex Review completed (1.1s)`: the Claude Code harness
+surfaces a job's internal title and prefixes "Codex", but the title already
+started with "Codex". Dropped the redundant prefix from companion job titles and
+the review/adversarial/delegate Bash `description`s; result headers keep
+`# Codex <title>` via render.mjs. Present in upstream too — candidate for an
+upstream PR. Notification *volume* is harness-owned and not throttleable in
+plugin code (see Notes). (commit 31ffdff)
+
+**Pre-work.** Exported `isPidAlive` (process.mjs) + `isBrokerEndpointReady`
+(broker-lifecycle.mjs) and de-duped job-control's private PID probe. No behavior
+change. (73bedd3)
+
+**Added — completion signal-file.** A sibling `<jobId>.done` is written on every
+terminal state (completed/failed/crashed) so a `Monitor` / `until [ -f ... ]`
+watcher wakes the instant a background job ends instead of polling.
+`resolveJobSignalFile` in state.mjs; pruneJobs cleans `.done` alongside
+`.json`/`.log`. Adapted from dragon84867. (69b93a2)
+
+**Added — per-turn telemetry + status stats.** One JSON line per finished turn
+(`durationMs`/`exitReason`/`kind`/`threadId`/`startedAt`) to
+`<stateDir>/telemetry.jsonl` (5MB single-gen roll, best-effort). `/codex:status`
+now shows p50/p95/max, stall rate, restart rate + a tuning recommendation. Also
+lands the pure `watchdog.mjs` hang-prevention module (timeout constants +
+`createIdleWatchdog`/`createBrokerIdleGuard`); the constants are used now, the
+guards are wired into the broker in the deferred self-heal phase. Until then
+restart rate uses the honest "interrupted" bucket. Adapted from Robbyfuu. (108d2fd)
+
+**Added — bounded RPC retry on BROKER_BUSY.** The broker returns BROKER_BUSY
+(-32001) when an exclusive stream is active — it refuses before the request
+reaches the child, so a retry is safe. Bounded + backoff; socket/exit errors
+carry no rpcCode and are NOT retried (no double-submit of a non-idempotent turn).
+Adapted from Robbyfuu. (a3ddbd9)
+
+**Added — `/codex:doctor`.** Read-only health report (broker classify
+healthy/orphaned/wedged/none via endpoint readiness + PID liveness; stale job
+artifacts; orphan pane markers; oversized telemetry) with gated `--fix`/`--clean`.
+A wedged broker is NEVER killed while an active job exists (kill-gate) with a
+TOCTOU re-check at execute time. 10th direct command; INV-1 preserved.
+broker-telemetry.jsonl is read optionally (lands with the self-heal phase).
+Adapted from Robbyfuu. (1a3f836)
+
+**Changed — Workflow-native delegate; team-bridge/pane-helper deprecated.**
+`workflows/codex-delegate.js` runs the A+ STATUS ping-pong as a deterministic
+Workflow loop — `agent({ agentType:"codex:codex-delegate", isolation:"worktree" })`
+with `pipeline()`/`parallel()` for concurrent, worktree-isolated tasks.
+delegate.md documents both the default subagent path (unchanged, INV-1) and the
+Workflow path. `codex-team-bridge` + `codex-pane-helper` are marked deprecated
+(kept for the `--pane` interactive-teammate case; removed in a future release).
+Workflow's `isolation:'worktree'` also covers dragon84867's per-job worktree for
+the orchestrated case. (9705736)
+
+**Fixed — schema description.** `codex-tool-calls.schema.json` said
+"fenced ```yaml" while the implementation parses JSON; corrected to "```json".
+
+**Deferred — broker self-heal (highest risk).** The item-flight broker watchdog +
+notification-router generation guard + broker-telemetry event log rewrite the
+broker's notification-forwarding loop, so they are deferred to an isolated
+worktree. The watchdog module is already in place; the RPC retry above is the
+shipped part. supa's existing W1 work (idle auto-shutdown, PID liveness, `crashed`
+status, shutdown timeout) already covers orphan/zombie/hung-session cases.
+
+**Notes — notification noise.** Desktop notifications are emitted by the Claude
+Code harness, not the plugin, so the plugin cannot throttle or disable them. To
+cut volume: disable the per-turn Stop-gate auto-review
+(`/codex:setup --disable-review-gate`) and/or set `preferredNotifChannel` in
+`~/.claude/settings.json`.
+
 ### Added — W6.F codex streaming events → SendMessage forwarder (SUP-392)
 
 User feedback (2026-05-10): "codex가 동작할 때 native로 응답 받는 구조보다는 툭 던져놓으면 이게 스트리밍으로 답이 들어오는게 아니라 한꺼번에 오는 구조인데 이것 또한 그냥 지금 너랑 대화하듯 자연스럽게 핑퐁되면 좋을 것 같아."

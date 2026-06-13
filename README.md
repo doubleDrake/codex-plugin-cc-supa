@@ -35,7 +35,7 @@ they already have.
   - Use `--as <action>` for explicit override; ambiguous prompts trigger one AskUserQuestion.
 - `/codex:review` for a normal read-only Codex review
 - `/codex:adversarial-review` for a steerable challenge review
-- `/codex:delegate` for a multi-step A+ delegation (Codex=brain, Claude=hand) — fork-original
+- `/codex:delegate` for a multi-step A+ delegation (Codex=brain, Claude=hand) — fork-original; the STATUS loop can also run as a Workflow (`workflows/codex-delegate.js`) for parallel, git-worktree-isolated delegations, while `--pane` stays for an interactive live teammate
 - `/codex:consult` for design discussions / Q&A with persistent per-workspace thread — fork-original
 - `/codex:rescue`, `/codex:status`, `/codex:result`, and `/codex:cancel` to delegate work and manage background jobs
 
@@ -207,6 +207,34 @@ Use it to:
 - see the latest completed job
 - confirm whether a task is still running
 
+It also surfaces per-turn telemetry for this repo (p50/p95/max turn duration, stall rate, restart rate) plus a timeout-tuning hint, backed by a local `telemetry.jsonl`.
+
+### `/codex:doctor`
+
+Prints a read-only health report of the Codex runtime for the current repository. The default invocation mutates nothing — it reports:
+
+- the shared Codex broker classification — `healthy`, `orphaned` (a dead session whose pid is gone), `wedged` (a live broker whose endpoint is unresponsive), or `none`
+- on-disk state-dir hygiene: stale job artifacts, orphan pane markers, and oversized telemetry
+- an `Issues:` list with severity and whether each issue is auto-fixable
+
+Examples:
+
+```bash
+/codex:doctor
+/codex:doctor --fix
+/codex:doctor --clean
+/codex:doctor --json
+```
+
+Cleanup flags (they combine):
+
+- `--fix` performs the safe repairs: tear down an orphaned broker session and remove orphan pane markers.
+- `--clean` additionally removes stale logs and rolls an oversized `telemetry.jsonl` (telemetry is rolled, never deleted).
+- `--json` emits the report as machine-readable JSON.
+
+> [!NOTE]
+> Kill-gate safety: a `wedged` broker is **never** killed while a Codex job is `running` or `queued` — it may be serving that job — so the destructive action is downgraded to report-only and the broker is left untouched.
+
 ### `/codex:result`
 
 Shows the final stored Codex output for a finished job.
@@ -331,3 +359,23 @@ Yes. If you already use Codex, the plugin picks up the same [configuration](#com
 Yes. Because the plugin uses your local Codex CLI, your existing sign-in method and config still apply.
 
 If you need to point the built-in OpenAI provider at a different endpoint, set `openai_base_url` in your [Codex config](https://developers.openai.com/codex/config-advanced/#config-and-state-locations).
+
+### Notifications
+
+Desktop notifications are emitted by the Claude Code harness, not by this plugin. The plugin only fixes how the title renders: it corrects the upstream `Codex Codex …` duplication so messages read `Codex Review completed …` instead.
+
+To reduce notification *volume*:
+
+- disable the per-turn Stop-gate auto-review with `/codex:setup --disable-review-gate` (the review gate runs a Codex review on every Claude stop, which is the main source of extra notifications)
+- and/or set `preferredNotifChannel` in `~/.claude/settings.json` to control which channel the harness uses for notifications
+
+## Credits / Attribution
+
+This plugin is a community fork of [`openai/codex-plugin-cc`](https://github.com/openai/codex-plugin-cc) (Apache-2.0).
+
+The reliability and observability features in this fork are adapted from other community forks, all under Apache-2.0:
+
+- the reliability/observability work — `/codex:doctor`, per-turn telemetry, the watchdog module, and RPC retry — is adapted from [`Robbyfuu/codex-plugin-cc`](https://github.com/Robbyfuu/codex-plugin-cc)
+- the background-job completion signal-file (`<jobId>.done`) is adapted from [`dragon84867/codex-plugin-cc`](https://github.com/dragon84867/codex-plugin-cc)
+
+Thanks to the upstream project and to these forks for the prior art.

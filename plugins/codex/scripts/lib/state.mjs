@@ -114,6 +114,7 @@ export function saveState(cwd, state) {
     }
     removeJobFile(resolveJobFile(cwd, job.id));
     removeFileIfExists(job.logFile);
+    removeFileIfExists(resolveJobSignalFile(cwd, job.id));
   }
 
   fs.writeFileSync(resolveStateFile(cwd), `${JSON.stringify(nextState, null, 2)}\n`, "utf8");
@@ -216,4 +217,12 @@ export function resolveJobLogFile(cwd, jobId) {
 export function resolveJobFile(cwd, jobId) {
   ensureStateDir(cwd);
   return path.join(resolveJobsDir(cwd), `${jobId}.json`);
+}
+
+// Completion signal file — a sibling `<jobId>.done` written when a tracked job
+// reaches a terminal state so a background watcher can wake immediately.
+// Pattern adapted from dragon84867/codex-plugin-cc.
+export function resolveJobSignalFile(cwd, jobId) {
+  ensureStateDir(cwd);
+  return path.join(resolveJobsDir(cwd), `${jobId}.done`);
 }

@@ -2,7 +2,7 @@ import fs from "node:fs";
 
 import { getSessionRuntimeStatus } from "./codex.mjs";
 import { getConfig, listJobs, readJobFile, resolveJobFile, upsertJob, writeJobFile } from "./state.mjs";
-import { SESSION_ID_ENV } from "./tracked-jobs.mjs";
+import { SESSION_ID_ENV, writeCompletionSignalFile } from "./tracked-jobs.mjs";
 import { isPidAlive } from "./process.mjs";
 import { resolveWorkspaceRoot } from "./workspace.mjs";
 
@@ -243,6 +243,9 @@ export function enrichJob(job, options = {}) {
             completedAt: stored.completedAt ?? new Date().toISOString()
           });
         }
+        // The dead worker never wrote its own `.done`, so emit the crashed
+        // completion signal here to wake any background watcher.
+        writeCompletionSignalFile(ws, enriched.id, "crashed", enriched.errorMessage);
       } catch {
         // Best-effort persist; the in-memory enrichment is still correct.
       }

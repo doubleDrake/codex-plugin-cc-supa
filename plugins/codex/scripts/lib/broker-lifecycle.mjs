@@ -118,7 +118,7 @@ export function clearBrokerSession(cwd) {
   }
 }
 
-async function isBrokerEndpointReady(endpoint) {
+export async function isBrokerEndpointReady(endpoint) {
   if (!endpoint) {
     return false;
   }

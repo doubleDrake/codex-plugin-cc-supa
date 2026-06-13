@@ -3,25 +3,11 @@ import fs from "node:fs";
 import { getSessionRuntimeStatus } from "./codex.mjs";
 import { getConfig, listJobs, readJobFile, resolveJobFile, upsertJob, writeJobFile } from "./state.mjs";
 import { SESSION_ID_ENV } from "./tracked-jobs.mjs";
+import { isPidAlive } from "./process.mjs";
 import { resolveWorkspaceRoot } from "./workspace.mjs";
 
 export const DEFAULT_MAX_STATUS_JOBS = 8;
 export const DEFAULT_MAX_PROGRESS_LINES = 4;
-
-// PID liveness check — `kill -0 <pid>` semantics (signal 0 just probes).
-// Refs: cc#264 (status stuck after task_complete), cc#164/#202/#222 (zombie running jobs).
-// Pattern adapted from sanghyun-io/codex-app-server-plugin `bin/codex-review.mjs:1003-1020`.
-function checkProcessAlive(pid) {
-  if (pid == null) return false;
-  const num = Number(pid);
-  if (!Number.isFinite(num) || num <= 0) return false;
-  try {
-    process.kill(num, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 function nowIsoSafe() {
   try { return new Date().toISOString(); } catch { return null; }
@@ -220,7 +206,7 @@ export function enrichJob(job, options = {}) {
   if (
     (enriched.status === "running" || enriched.status === "queued") &&
     enriched.pid &&
-    !checkProcessAlive(enriched.pid)
+    !isPidAlive(enriched.pid)
   ) {
     let errorMessage = `Worker process exited unexpectedly (PID ${enriched.pid} no longer alive).`;
     const tail = tailLogLines(enriched.logFile, 3);
@@ -350,7 +336,7 @@ export function resolveResultJob(cwd, reference) {
   // review W1 follow-up #2.
   const rawJobs = sortJobsNewestFirst(reference ? listJobs(workspaceRoot) : filterJobsForCurrentSession(listJobs(workspaceRoot)));
   for (const job of rawJobs) {
-    if ((job.status === "running" || job.status === "queued") && job.pid && !checkProcessAlive(job.pid)) {
+    if ((job.status === "running" || job.status === "queued") && job.pid && !isPidAlive(job.pid)) {
       enrichJob(job, { workspaceRoot });
     }
   }
@@ -385,12 +371,12 @@ export function resolveCancelableJob(cwd, reference, options = {}) {
   // pass first so the zombie status is persisted, then filter on the fresh
   // list. Refs: adversarial review W1 follow-up #2.
   for (const job of rawJobs) {
-    if ((job.status === "running" || job.status === "queued") && job.pid && !checkProcessAlive(job.pid)) {
+    if ((job.status === "running" || job.status === "queued") && job.pid && !isPidAlive(job.pid)) {
       enrichJob(job, { workspaceRoot });
     }
   }
   const jobs = sortJobsNewestFirst(listJobs(workspaceRoot));
-  const activeJobs = jobs.filter((job) => (job.status === "queued" || job.status === "running") && (!job.pid || checkProcessAlive(job.pid)));
+  const activeJobs = jobs.filter((job) => (job.status === "queued" || job.status === "running") && (!job.pid || isPidAlive(job.pid)));
 
   if (reference) {
     const selected = matchJobReference(activeJobs, reference);

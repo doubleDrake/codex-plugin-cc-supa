@@ -114,6 +114,7 @@ export function saveState(cwd, state) {
     }
     removeJobFile(resolveJobFile(cwd, job.id));
     removeFileIfExists(job.logFile);
+    removeFileIfExists(resolveJobSignalFile(cwd, job.id));
   }
 
   fs.writeFileSync(resolveStateFile(cwd), `${JSON.stringify(nextState, null, 2)}\n`, "utf8");
@@ -216,4 +217,29 @@ export function resolveJobLogFile(cwd, jobId) {
 export function resolveJobFile(cwd, jobId) {
   ensureStateDir(cwd);
   return path.join(resolveJobsDir(cwd), `${jobId}.json`);
+}
+
+// Completion signal file — a sibling `<jobId>.done` written when a tracked job
+// reaches a terminal state so a background watcher can wake immediately.
+// Pattern adapted from dragon84867/codex-plugin-cc.
+export function resolveJobSignalFile(cwd, jobId) {
+  ensureStateDir(cwd);
+  return path.join(resolveJobsDir(cwd), `${jobId}.done`);
+}
+
+// Per-turn telemetry log — one JSON line per finished turn at
+// `<stateDir>/telemetry.jsonl`. Pattern adapted from Robbyfuu/codex-plugin-cc.
+export function resolveTelemetryFile(cwd) {
+  ensureStateDir(cwd);
+  return path.join(resolveStateDir(cwd), "telemetry.jsonl");
+}
+
+// Broker event log — one JSON line per broker lifecycle event at
+// `<stateDir>/broker-telemetry.jsonl`, a SIBLING of the per-turn telemetry file.
+// The broker is a second writer, so it lives in its own file rather than sharing
+// the turn file (which documents an unlocked roll race a second writer worsens).
+// Pattern adapted from Robbyfuu/codex-plugin-cc.
+export function resolveBrokerTelemetryFile(cwd) {
+  ensureStateDir(cwd);
+  return path.join(resolveStateDir(cwd), "broker-telemetry.jsonl");
 }

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/doubleDrake/codex-plugin-cc-supa/schemas/codex-tool-calls.schema.json",
   "title": "codex-tool-calls",
-  "description": "Tool calls Codex emits in its final delegate response. The codex-companion runtime parses one fenced ```yaml codex-tool-calls block, validates against this schema, and dispatches each call locally (file edits, inbox writes, bash). Codex never invokes Claude Code primitives directly — this schema is the bridge contract. Claude or Codex updates change ONLY this file.",
+  "description": "Tool calls Codex emits in its final delegate response. The codex-companion runtime parses one fenced ```json codex-tool-calls block, validates against this schema, and dispatches each call locally (file edits, inbox writes, bash). Codex never invokes Claude Code primitives directly — this schema is the bridge contract. Claude or Codex updates change ONLY this file.",
   "type": "array",
   "items": {
     "$ref": "#/$defs/ToolCall"

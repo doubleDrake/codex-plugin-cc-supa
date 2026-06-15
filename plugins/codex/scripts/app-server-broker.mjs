@@ -9,10 +9,22 @@ import { parseArgs } from "./lib/args.mjs";
 import { BROKER_BUSY_RPC_CODE, CodexAppServerClient } from "./lib/app-server.mjs";
 import { parseBrokerEndpoint } from "./lib/broker-endpoint.mjs";
 import { clearBrokerSession } from "./lib/broker-lifecycle.mjs";
+import { createNotificationRouter, performBrokerRecovery } from "./lib/broker-routing.mjs";
+import { recordBrokerEvent } from "./lib/broker-telemetry.mjs";
+import { createBrokerIdleGuard, resolveTimeouts } from "./lib/watchdog.mjs";
 
 const STREAMING_METHODS = new Set(["turn/start", "review/start", "thread/compact/start"]);
+// JSON-RPC error code surfaced to a client whose in-flight turn was recovered by
+// the broker self-heal. Distinct from BROKER_BUSY so a waiter can tell a "you
+// were restarted" signal apart from a "someone else owns the slot" rejection.
+const BROKER_RECOVERED_RPC_CODE = -32003;
 
-// Idle auto-shutdown — defense-in-depth against orphan brokers when SessionEnd hook fails.
+// Idle auto-shutdown (W1) — defense-in-depth against orphan brokers when the
+// SessionEnd hook fails. This is the CONNECTION-COUNT idle: it fires only when
+// NO client socket is connected for BROKER_IDLE_MS and then exits the process.
+// It is INDEPENDENT of the item-flight self-heal guard below (which interrupts /
+// restarts a wedged child mid-turn while a client is still connected). The two
+// must coexist: one reaps an unused broker, the other heals a stuck one.
 // Refs: cc#108, cc#163, cc#193. Pattern adapted from sanghyun-io/codex-app-server-plugin
 // `bin/broker.mjs:65, 491-499`.
 const DEFAULT_BROKER_IDLE_MS = 10 * 60 * 1000;
@@ -75,14 +87,49 @@ async function main() {
   const pidFile = options["pid-file"] ? path.resolve(options["pid-file"]) : null;
   writePidFile(pidFile);
 
-  const appClient = await CodexAppServerClient.connect(cwd, { disableBroker: true });
+  // Self-heal idle window (per-turn stall detection). Distinct from the
+  // connection-count BROKER_IDLE_MS above.
+  const { idleMs } = resolveTimeouts(process.env);
+
+  // Best-effort broker event telemetry: append broker lifecycle events to the
+  // sibling broker-telemetry.jsonl so the status report can use REAL restart
+  // counts instead of inferring them from the interrupted turn bucket. Never
+  // throws into the broker (recordBrokerEvent is itself swallow-on-failure, but
+  // we also wrap here so a resolver hiccup can never disturb a child swap).
+  const recordEvent = (event) => {
+    try {
+      recordBrokerEvent(event, { cwd });
+    } catch {
+      // swallow — broker telemetry is observational, never load-bearing.
+    }
+  };
+
+  let appClient = await CodexAppServerClient.connect(cwd, { disableBroker: true });
+  recordEvent({ event: "child-spawned", generation: 0 });
+  // Monotonic generation, bumped on every child (re)connect. Each child's
+  // notification handler closes over the generation it was created with, so a
+  // late notification from an OLD child (e.g. a stale turn/completed arriving
+  // after a swap) can be recognised and dropped instead of unparking/clearing
+  // the NEXT client's stream slot.
+  let generation = 0;
   let activeRequestSocket = null;
   let activeStreamSocket = null;
   let activeStreamThreadIds = null;
+  let activeThreadIds = null;
+  let recovering = false;
+  // Latches true if a recovery's reconnect fails. A latched-unhealthy broker
+  // refuses further recovery attempts (no loop) and is on its way to exit(1) so
+  // broker-lifecycle respawns a fresh broker + child on the next call.
+  let unhealthy = false;
   const sockets = new Set();
+  // De-duped set of item ids that have started but not yet completed on the
+  // active child. While non-empty the idle guard must not interrupt/restart the
+  // child: a long command/reasoning block emits no notifications mid-flight.
+  const inFlightItems = new Set();
 
-  // Idle shutdown timer — fires when no client sockets are active for BROKER_IDLE_MS.
-  // Cancelled while any socket is connected. (Refs: cc#108)
+  // Idle auto-shutdown timer (W1) — fires when no client sockets are active for
+  // BROKER_IDLE_MS. Cancelled while any socket is connected. Independent of the
+  // self-heal idle guard. (Refs: cc#108)
   let idleTimer = null;
   function resetIdleTimer() {
     if (idleTimer) {
@@ -107,27 +154,172 @@ async function main() {
       activeStreamSocket = null;
       activeStreamThreadIds = null;
     }
+    if (!activeRequestSocket && !activeStreamSocket) {
+      activeThreadIds = null;
+      inFlightItems.clear();
+      idleGuard.stop();
+    }
   }
 
-  function routeNotification(message) {
-    const target = activeRequestSocket ?? activeStreamSocket;
-    if (!target) {
-      return;
-    }
-    send(target, message);
-    if (message.method === "turn/completed" && activeStreamSocket === target) {
-      const threadId = message.params?.threadId ?? null;
-      if (!threadId || !activeStreamThreadIds || activeStreamThreadIds.has(threadId)) {
-        activeStreamSocket = null;
-        activeStreamThreadIds = null;
-        if (activeRequestSocket === target) {
-          activeRequestSocket = null;
+  function activeClientSocket() {
+    return activeRequestSocket ?? activeStreamSocket;
+  }
+
+  // Build a notification handler bound to a specific child generation. The bound
+  // generation is checked against the current one on every notification so a
+  // late notification from a superseded child no-ops. Routing logic lives in the
+  // pure createNotificationRouter factory (unit-tested in isolation).
+  function makeRouteNotification(boundGeneration) {
+    return createNotificationRouter(boundGeneration, {
+      getGeneration: () => generation,
+      isRecovering: () => recovering,
+      getActiveRequestSocket: () => activeRequestSocket,
+      setActiveRequestSocket: (value) => {
+        activeRequestSocket = value;
+      },
+      getActiveStreamSocket: () => activeStreamSocket,
+      setActiveStreamSocket: (value) => {
+        activeStreamSocket = value;
+      },
+      getActiveStreamThreadIds: () => activeStreamThreadIds,
+      setActiveStreamThreadIds: (value) => {
+        activeStreamThreadIds = value;
+      },
+      setActiveThreadIds: (value) => {
+        activeThreadIds = value;
+      },
+      send,
+      notifyIdle: () => idleGuard.notify(),
+      stopIdle: () => idleGuard.stop(),
+      noteItemStarted: (itemId) => inFlightItems.add(itemId),
+      noteItemCompleted: (itemId) => inFlightItems.delete(itemId),
+      clearInFlightItems: () => inFlightItems.clear()
+    });
+  }
+
+  // Two-stage self-heal: when the active request/stream sees no traffic for the
+  // idle window, first try a soft interrupt of the codex child; if it stays
+  // silent for a second window, restart the child and unblock the waiting
+  // client so the session recovers instead of wedging on BROKER_BUSY forever.
+  const idleGuard = createBrokerIdleGuard({
+    idleMs,
+    isActive: () => Boolean(activeClientSocket()) && !recovering,
+    // A started-but-not-completed item means the child is legitimately busy
+    // (e.g. a slow build/test/clone). Never interrupt/restart while in flight.
+    isInFlight: () => inFlightItems.size > 0,
+    interruptActiveTurn: async () => {
+      // Capture the client up-front: a concurrent recovery may reassign
+      // appClient (and close the old one) while we await below. If a recovery is
+      // already running, let it own the child instead of touching a half-open one.
+      if (recovering) {
+        return;
+      }
+      const client = appClient;
+      const threadIds = activeThreadIds && activeThreadIds.size > 0 ? [...activeThreadIds] : [];
+      for (const threadId of threadIds) {
+        if (recovering || client.closed) {
+          return;
+        }
+        try {
+          await client.request("turn/interrupt", { threadId });
+        } catch {
+          // Best-effort soft recovery; the restart stage handles a wedged child.
         }
       }
+    },
+    restartChild: async () => {
+      if (recovering) {
+        return;
+      }
+      await recoverBrokerChild("Shared Codex broker restarted the runtime after a stall.");
     }
+  });
+
+  async function recoverBrokerChild(detail) {
+    // `unhealthy` latches after a failed reconnect so a pending process.exit can
+    // never be out-raced into a recovery loop (defense-in-depth alongside exit).
+    if (recovering || unhealthy) {
+      return;
+    }
+    recovering = true;
+    const waiting = activeClientSocket();
+    // A streaming client is parked on turn/completed notifications, not on a
+    // request id, so a plain JSON-RPC error keyed to id:null would be ignored.
+    // Capture the threads it is streaming so we can emit synthetic
+    // turn/completed signals that the client actually processes.
+    const streamingThreadIds =
+      activeStreamSocket === waiting && activeThreadIds && activeThreadIds.size > 0 ? [...activeThreadIds] : [];
+
+    const outcome = await performBrokerRecovery({
+      reconnect: async () => {
+        const oldClient = appClient;
+        // Bump the generation BEFORE closing/reconnecting so the old child's
+        // handler (and any late notifications it delivers, even during the close
+        // await) immediately no-op via the generation check — independent of the
+        // `recovering` flag.
+        generation += 1;
+        await oldClient.close().catch(() => {});
+        appClient = await CodexAppServerClient.connect(cwd, { disableBroker: true });
+        appClient.setNotificationHandler(makeRouteNotification(generation));
+        recordEvent({ event: "child-spawned", generation });
+      },
+      notifyWaiter: () => {
+        if (!waiting) {
+          return;
+        }
+        // Surface a human-readable error first (picked up by id-keyed waiters and
+        // logged by streaming waiters), then settle any streaming turn so the
+        // client's completion promise resolves instead of hanging.
+        send(waiting, {
+          id: null,
+          error: buildJsonRpcError(BROKER_RECOVERED_RPC_CODE, detail)
+        });
+        for (const threadId of streamingThreadIds) {
+          send(waiting, {
+            method: "turn/completed",
+            params: { threadId, turn: { id: "broker-recovered", status: "interrupted" } }
+          });
+        }
+      },
+      resetSlot: () => {
+        activeRequestSocket = null;
+        activeStreamSocket = null;
+        activeStreamThreadIds = null;
+        activeThreadIds = null;
+        // The old child (and its in-flight items) is gone; start the new one with
+        // an empty in-flight set so a stale id can never keep the guard paused.
+        inFlightItems.clear();
+      },
+      stopIdle: () => idleGuard.stop(),
+      logError: (error) => {
+        process.stderr.write(
+          `broker recovery failed: ${error instanceof Error ? error.message : String(error)}\n`
+        );
+      },
+      onUnrecoverable: () => {
+        // The child swap failed; this broker can no longer serve requests on its
+        // broken client. Latch unhealthy, then exit so broker-lifecycle respawns
+        // a fresh broker + child on the next /peer:* call. The waiting client
+        // was already notified by notifyWaiter above, so nobody hangs.
+        unhealthy = true;
+        process.exit(1);
+      },
+      // Stamp each recovery event with the live generation so stats can correlate
+      // a restart with the child it produced. broker-routing emits the bare
+      // {event} and never throws; we enrich it here without touching that purity.
+      recordEvent: (entry) => recordEvent({ ...entry, generation })
+    });
+
+    recovering = false;
+    return outcome;
   }
 
   async function shutdown(server) {
+    idleGuard.stop();
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
+    }
     for (const socket of sockets) {
       socket.end();
     }
@@ -147,7 +339,7 @@ async function main() {
     try { clearBrokerSession(cwd); } catch { /* best-effort */ }
   }
 
-  appClient.setNotificationHandler(routeNotification);
+  appClient.setNotificationHandler(makeRouteNotification(generation));
 
   const server = net.createServer((socket) => {
     sockets.add(socket);
@@ -231,18 +423,33 @@ async function main() {
 
         const isStreaming = STREAMING_METHODS.has(message.method);
         activeRequestSocket = socket;
+        if (message.params?.threadId) {
+          activeThreadIds = new Set([message.params.threadId]);
+        }
+        // Watch the active slot for stalls (covers both the request round-trip
+        // and any subsequent streaming notifications).
+        idleGuard.start();
 
         try {
           const result = await appClient.request(message.method, message.params ?? {});
+          idleGuard.notify();
           send(socket, { id: message.id, result });
           if (isStreaming) {
             activeStreamSocket = socket;
             activeStreamThreadIds = buildStreamThreadIds(message.method, message.params ?? {}, result);
+            activeThreadIds = activeStreamThreadIds;
           }
           if (activeRequestSocket === socket) {
             activeRequestSocket = null;
           }
+          if (!activeStreamSocket) {
+            activeThreadIds = null;
+            inFlightItems.clear();
+            idleGuard.stop();
+          }
         } catch (error) {
+          idleGuard.stop();
+          inFlightItems.clear();
           send(socket, {
             id: message.id,
             error: buildJsonRpcError(error.rpcCode ?? -32000, error.message)
@@ -252,6 +459,9 @@ async function main() {
           }
           if (activeStreamSocket === socket && !isStreaming) {
             activeStreamSocket = null;
+          }
+          if (!activeRequestSocket && !activeStreamSocket) {
+            activeThreadIds = null;
           }
         }
       }

@@ -366,6 +366,21 @@ export function renderStatusReport(report) {
     lines.push("No jobs recorded yet.", "");
   }
 
+  if (report.stats && report.stats.total > 0) {
+    const stats = report.stats;
+    lines.push("Turn stats (this workspace):");
+    lines.push(
+      `- turns ${stats.total} | p50 ${stats.durationP50}ms | p95 ${stats.durationP95}ms | max ${stats.durationMax}ms`
+    );
+    lines.push(
+      `- stall rate ${(stats.stallRate * 100).toFixed(1)}% | restart rate ${(stats.restartRate * 100).toFixed(1)}% (source: ${stats.restartRateSource})`
+    );
+    if (stats.recommendation) {
+      lines.push(`- ${stats.recommendation}`);
+    }
+    lines.push("");
+  }
+
   if (report.needsReview) {
     lines.push("The stop-time review gate is enabled.");
     lines.push("Ending the session will trigger a fresh Codex adversarial review and block if it finds issues.");
@@ -419,7 +434,7 @@ export function renderStoredJobResult(job, storedJob) {
   }
 
   const lines = [
-    `# ${job.title ?? "Codex Result"}`,
+    `# Codex ${job.title ?? "Result"}`,
     "",
     `Job: ${job.id}`,
     `Status: ${job.status}`
@@ -460,6 +475,96 @@ export function renderCancelReport(job) {
     lines.push(`- Summary: ${job.summary}`);
   }
   lines.push("- Check `/codex:status` for the updated queue.");
+
+  return `${lines.join("\n").trimEnd()}\n`;
+}
+
+// Pattern adapted from Robbyfuu/codex-plugin-cc (Apache-2.0).
+function formatBytes(bytes) {
+  const value = Number(bytes);
+  if (!Number.isFinite(value) || value <= 0) {
+    return "0 B";
+  }
+  if (value < 1024) {
+    return `${value} B`;
+  }
+  const kib = value / 1024;
+  if (kib < 1024) {
+    return `${kib.toFixed(1)} KiB`;
+  }
+  return `${(kib / 1024).toFixed(1)} MiB`;
+}
+
+const BROKER_CLASSIFICATION_LABEL = {
+  healthy: "healthy",
+  orphaned: "orphaned (dead broker session)",
+  wedged: "wedged (live but unresponsive)",
+  none: "not configured"
+};
+
+export function renderDoctorReport(report) {
+  const broker = report?.broker ?? {};
+  const stateDir = report?.stateDir ?? {};
+  const issues = Array.isArray(report?.issues) ? report.issues : [];
+
+  const lines = [
+    "# Codex Doctor",
+    "",
+    `Status: ${report?.ready ? "healthy" : "needs attention"}`,
+    "",
+    "Checks:",
+    `- codex: ${report?.codex?.available ? "available" : "unavailable"} (${report?.codex?.detail ?? ""})`,
+    `- broker: ${BROKER_CLASSIFICATION_LABEL[broker.classification] ?? broker.classification ?? "unknown"}`
+  ];
+
+  if (broker.configured) {
+    lines.push(`  - endpoint: ${broker.endpoint ?? "unknown"}`);
+    lines.push(`  - pid: ${broker.pid ?? "unknown"} (${broker.pidAlive ? "alive" : "dead"})`);
+    lines.push(`  - socket ready: ${broker.socketReady ? "yes" : "no"}`);
+  }
+
+  lines.push(`- state dir: ${stateDir.path ?? "unknown"} (${formatBytes(stateDir.totalBytes)})`);
+  lines.push(`  - stale artifacts: ${(stateDir.staleLogs ?? []).length}`);
+  lines.push(`  - orphan pane markers: ${(stateDir.orphanPaneMarkers ?? []).length}`);
+  lines.push(
+    `  - telemetry: ${formatBytes(stateDir.telemetryBytes)}${stateDir.telemetryOverCap ? " (over cap)" : ""}`
+  );
+  lines.push(`- active jobs: ${report?.activeJobCount ?? 0}`);
+  lines.push("");
+
+  if (issues.length > 0) {
+    lines.push("Issues:");
+    for (const issue of issues) {
+      lines.push(`- [${issue.severity}] ${issue.kind}: ${issue.detail}${issue.autoFixable ? " (auto-fixable)" : ""}`);
+    }
+    lines.push("");
+  } else {
+    lines.push("No issues found.", "");
+  }
+
+  const planned = report?.plannedActions;
+  if (planned && (planned.safe?.length || planned.gated?.length)) {
+    lines.push("Planned actions:");
+    for (const action of planned.safe ?? []) {
+      lines.push(`- ${action.detail}`);
+    }
+    for (const action of planned.gated ?? []) {
+      lines.push(`- ${action.detail}`);
+    }
+    lines.push("");
+  }
+
+  if (Array.isArray(report?.actionsTaken) && report.actionsTaken.length > 0) {
+    lines.push("Actions taken:");
+    for (const action of report.actionsTaken) {
+      lines.push(`- ${action}`);
+    }
+    lines.push("");
+  }
+
+  if (!report?.plannedActions && !(report?.actionsTaken?.length)) {
+    lines.push("Read-only diagnosis. Re-run with --fix to clean safe issues, --clean to roll logs/telemetry.");
+  }
 
   return `${lines.join("\n").trimEnd()}\n`;
 }

@@ -43,6 +43,30 @@ Operating rules:
 - Leave `--model` unset unless the user explicitly asks. If they ask for `spark`, map it to `--model gpt-5.3-codex-spark`.
 - Auto-Context (cwd / branch / git status / recent commits / modified files) is **on by default**. Pass `--no-auto-context` to opt out.
 
+Execution models:
+
+There are two ways to run a delegate. The default is unchanged; the second is new.
+
+**(a) DEFAULT — subagent path (INV-1, unchanged).** Invoke the `codex:codex-delegate` subagent via the `Agent` tool exactly as described above. This is the single-delegate, turn-by-turn UX and stays the default for every `/codex:delegate` invocation. `--background`, `--wait`, and `--pane` continue to select Claude Code execution mode within this path. Nothing about this path changes — it remains the path the rest of this command documents.
+
+**(b) NEW — Workflow-native path.** When the user wants **several delegations at once** (e.g. "delegate these three refactors in parallel"), or wants **each delegation isolated in its own git worktree**, run the **Workflow tool** with `workflows/codex-delegate.js` instead of spawning the subagent yourself. That Workflow:
+- Takes a list of task descriptions from `args` (one or many).
+- For each task, runs the STATUS ping-pong as a deterministic JS `while` loop, calling `agent({ agentType: "codex:codex-delegate", isolation: "worktree", prompt, schema })` until the result signals `STATUS: DONE` or a 5-turn cap.
+- Uses `pipeline()` / `parallel()` so multiple tasks run concurrently, each in its own auto-created / auto-cleaned worktree.
+- Runs in the background and notifies on completion.
+
+The Workflow expresses the team-bridge STATUS loop and worktree isolation natively, so for parallel / isolated orchestration it supersedes the hand-rolled `codex-team-bridge` + `codex-pane-helper` skills.
+
+**`--pane` remains the Agent-Teams opt-in.** When the user wants an **interactive live teammate** they can SendMessage mid-run (human-in-the-loop), keep using `--pane` (subagent path + the team bridge). The Workflow path is for deterministic orchestration, not live human-in-the-loop chat — it can't do that one case.
+
+Decision:
+
+```
+several tasks at once, or each isolated in a worktree?  → Workflow-native path (workflows/codex-delegate.js)
+interactive live teammate (SendMessage mid-run)?        → --pane (subagent + team bridge)
+otherwise                                               → DEFAULT subagent path (unchanged)
+```
+
 Examples:
 
 ```

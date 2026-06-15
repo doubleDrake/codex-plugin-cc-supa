@@ -57,16 +57,20 @@ import {
 } from "./lib/tracked-jobs.mjs";
 import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
 import { processCodexResponse } from "./lib/codex-tool-calls.mjs";
+import { readTelemetry, aggregateTelemetry } from "./lib/telemetry.mjs";
+import { readBrokerEvents } from "./lib/broker-telemetry.mjs";
 import {
   renderNativeReviewResult,
   renderReviewResult,
   renderStoredJobResult,
   renderCancelReport,
+  renderDoctorReport,
   renderJobStatusReport,
   renderSetupReport,
   renderStatusReport,
   renderTaskResult
 } from "./lib/render.mjs";
+import { buildDoctorReport, planCleanup, executeCleanup } from "./lib/doctor.mjs";
 
 const ROOT_DIR = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const REVIEW_SCHEMA = path.join(ROOT_DIR, "schemas", "review-output.schema.json");
@@ -87,7 +91,8 @@ function printUsage() {
       "  node scripts/codex-companion.mjs consult [--fresh] [--background] [--model <model|spark>] [topic or follow-up]",
       "  node scripts/codex-companion.mjs status [job-id] [--all] [--json]",
       "  node scripts/codex-companion.mjs result [job-id] [--json]",
-      "  node scripts/codex-companion.mjs cancel [job-id] [--json]"
+      "  node scripts/codex-companion.mjs cancel [job-id] [--json]",
+      "  node scripts/codex-companion.mjs doctor [--fix] [--clean] [--json]"
     ].join("\n")
   );
 }
@@ -582,7 +587,10 @@ async function executeTaskRun(request) {
 function buildReviewJobMetadata(reviewName, target) {
   return {
     kind: reviewName === "Adversarial Review" ? "adversarial-review" : "review",
-    title: reviewName === "Review" ? "Codex Review" : `Codex ${reviewName}`,
+    // Job title is surfaced verbatim in the Claude Code harness desktop
+    // notification, which already prefixes "Codex". Keep it un-prefixed here so
+    // the notification reads "Codex Review" rather than "Codex Codex Review".
+    title: reviewName,
     summary: `${reviewName} ${target.label}`
   };
 }
@@ -590,14 +598,14 @@ function buildReviewJobMetadata(reviewName, target) {
 function buildTaskRunMetadata({ prompt, resumeLast = false, delegateMode = false }) {
   if (!resumeLast && String(prompt ?? "").includes(STOP_REVIEW_TASK_MARKER)) {
     return {
-      title: "Codex Stop Gate Review",
+      title: "Stop Gate Review",
       summary: "Stop-gate review of previous Claude turn"
     };
   }
 
   const title = delegateMode
-    ? (resumeLast ? "Codex Delegate (resume)" : "Codex Delegate")
-    : (resumeLast ? "Codex Resume" : "Codex Task");
+    ? (resumeLast ? "Delegate (resume)" : "Delegate")
+    : (resumeLast ? "Resume" : "Task");
   const fallbackSummary = resumeLast ? DEFAULT_CONTINUE_PROMPT : "Task";
   return {
     title,
@@ -959,7 +967,7 @@ async function handleConsult(argv) {
   const job = createCompanionJob({
     prefix: "consult",
     kind: "consult",
-    title: "Codex Consult",
+    title: "Consult",
     workspaceRoot,
     jobClass: "consult",
     summary: shorten(userPrompt)
@@ -1053,7 +1061,46 @@ async function handleStatus(argv) {
   }
 
   const report = buildStatusSnapshot(cwd, { all: options.all });
+  try {
+    const telemetryRecords = readTelemetry({ cwd });
+    if (telemetryRecords.length > 0) {
+      // Pass broker events so the restart rate uses the REAL "broker" source
+      // (recovery-succeeded/failed from broker-telemetry.jsonl) when that file
+      // exists; otherwise aggregateTelemetry falls back to the interrupted-turn
+      // inference. readBrokerEvents is best-effort and returns [] when absent.
+      report.stats = aggregateTelemetry(telemetryRecords, {
+        env: process.env,
+        brokerEvents: readBrokerEvents(cwd)
+      });
+    }
+  } catch {
+    // Telemetry is best-effort; never let it break /codex:status.
+  }
   outputResult(renderStatusPayload(report, options.json), options.json);
+}
+
+async function handleDoctor(argv) {
+  const { options } = parseCommandInput(argv, {
+    valueOptions: ["cwd"],
+    booleanOptions: ["json", "fix", "clean"]
+  });
+
+  // The state dir is keyed by workspace root (resolveStateDir resolves through
+  // resolveWorkspaceRoot), so doctor must diagnose the workspace, not the raw
+  // cwd, to match where jobs/telemetry/broker.json actually live.
+  const workspaceRoot = resolveCommandWorkspace(options);
+  const fix = Boolean(options.fix);
+  const clean = Boolean(options.clean);
+
+  const report = await buildDoctorReport(workspaceRoot, { env: process.env });
+
+  if (fix || clean) {
+    const plan = planCleanup(report, { fix, clean });
+    report.plannedActions = { safe: plan.safe, gated: plan.gated };
+    report.actionsTaken = executeCleanup(plan, report);
+  }
+
+  outputResult(options.json ? report : renderDoctorReport(report), options.json);
 }
 
 function handleResult(argv) {
@@ -1209,6 +1256,9 @@ async function main() {
       break;
     case "cancel":
       await handleCancel(argv);
+      break;
+    case "doctor":
+      await handleDoctor(argv);
       break;
     default:
       throw new Error(`Unknown subcommand: ${subcommand}`);

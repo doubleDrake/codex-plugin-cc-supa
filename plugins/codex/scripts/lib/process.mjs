@@ -117,6 +117,21 @@ export function terminateProcessTree(pid, options = {}) {
   }
 }
 
+// PID liveness check — `kill -0 <pid>` semantics (signal 0 just probes).
+// Refs: cc#264 (status stuck after task_complete), cc#164/#202/#222 (zombie running jobs).
+// Pattern adapted from sanghyun-io/codex-app-server-plugin `bin/codex-review.mjs:1003-1020`.
+export function isPidAlive(pid) {
+  if (pid == null) return false;
+  const num = Number(pid);
+  if (!Number.isFinite(num) || num <= 0) return false;
+  try {
+    process.kill(num, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function formatCommandFailure(result) {
   const parts = [`${result.command} ${result.args.join(" ")}`.trim()];
   if (result.signal) {

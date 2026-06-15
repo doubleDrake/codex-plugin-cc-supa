@@ -1,6 +1,7 @@
 ---
 name: codex-team-bridge
 description: Translate layer between Codex (which knows nothing about Agent Teams) and Claude Code's SendMessage / Agent / TeamCreate primitives. Use this skill when an agent in a team is wrapping codex-companion calls and needs to relay codex events to team-lead, or relay team-lead decisions back to codex on STATUS: NEEDS_FOLLOW_UP. Loads inside agents/codex-delegate.md, can be reused by any other team-aware agent that wraps codex-companion.
+user-invocable: false
 ---
 
 # codex-team-bridge — translation layer
